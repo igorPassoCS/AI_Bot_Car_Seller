@@ -6,11 +6,19 @@ import { CarCard, type CarCardData } from "@/components/car-card";
 type AssistantPayload = {
   reply: string;
   scenario: string;
+  strategy?: {
+    scenario: string;
+    approach: string;
+  };
   interpretedCriteria: {
     brand?: string;
     model?: string;
     maxPrice?: number;
     location?: string;
+  };
+  intentState?: {
+    locationSensitivity: "low" | "medium" | "high";
+    budgetFlexibility: "rigid" | "moderate" | "flexible";
   };
   cars: CarCardData[];
 };
@@ -27,6 +35,11 @@ const starterMessage: ChatItem = {
 };
 
 export function ChatPage() {
+  const [sessionId] = useState(() =>
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `session-${Math.random().toString(36).slice(2)}`
+  );
   const [messages, setMessages] = useState<ChatItem[]>([starterMessage]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -57,7 +70,7 @@ export function ChatPage() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, sessionId })
       });
 
       if (!response.ok) {

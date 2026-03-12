@@ -4,6 +4,7 @@ import { runSalesConsultant } from "@/application/services/chat-orchestrator";
 
 const bodySchema = z.object({
   message: z.string().min(1),
+  sessionId: z.string().min(1).optional(),
   criteria: z
     .object({
       brand: z.string().optional(),
@@ -32,14 +33,17 @@ export async function POST(request: Request): Promise<Response> {
 
     const output = await runSalesConsultant(
       parsed.data.message,
-      parsed.data.criteria
+      parsed.data.criteria,
+      parsed.data.sessionId
     );
 
     return NextResponse.json({
       reply: output.reply,
       scenario: output.result.scenario,
       interpretedCriteria: output.result.interpretedCriteria,
-      cars: output.result.suggestions
+      cars: output.result.suggestions,
+      strategy: output.strategy,
+      intentState: output.intentState
     });
   } catch (error) {
     return NextResponse.json(

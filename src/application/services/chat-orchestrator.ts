@@ -3,71 +3,96 @@ import { env } from "@/config/env";
 import { mastra } from "@/mastra";
 import { JsonCarRepository } from "@/infrastructure/repositories/json-car-repository";
 import { SearchCarsUseCase } from "@/application/use-cases/search-cars";
+import type { SearchIntentState } from "@/domain/search-intent";
+import { searchIntentStateSchema } from "@/domain/search-intent";
+import {
+  getSearchIntentState,
+  saveSearchIntentState
+} from "@/application/services/search-intent-store";
+import { buildFallbackReply } from "@/application/services/sales-reply";
 
 export type ChatResponse = {
   reply: string;
   result: SearchCarsResult;
+  strategy?: {
+    scenario:
+      | "exact_match"
+      | "price_mismatch"
+      | "location_mismatch"
+      | "no_filtered_match";
+    approach:
+      | "close_now"
+      | "value_reframing"
+      | "logistics_assurance"
+      | "discovery_recovery";
+  };
+  intentState: SearchIntentState;
 };
 
-// Prompt part of the application:
-const buildPrompt = (message: string, result: SearchCarsResult): string => {
-  return `
-User request:
-${message}
-
-Search result JSON:
-${JSON.stringify(result, null, 2)}
-
-Provide a concise sales response using this result.
-Mention mismatch reasons when applicable and recommend the top options.
-`;
-};
-
-const buildFallbackReply = (result: SearchCarsResult): string => {
-  const top = result.suggestions[0];
-  if (!top) {
-    return "Nao encontrei carros agora. Tente ajustar os filtros de marca, preco ou cidade.";
-  }
-
-  const base = `${top.car.name} ${top.car.model} por R$ ${top.car.price.toLocaleString(
-    "pt-BR"
-  )} em ${top.car.location}.`;
-
-  if (result.scenario === "exact_match") {
-    return `Encontrei uma opcao alinhada ao seu pedido: ${base}`;
-  }
-
-  if (result.scenario === "price_mismatch") {
-    return `Nao achei dentro do teto exato, mas a melhor aproximacao e ${base} Vale considerar pelo custo-beneficio e liquidez.`;
-  }
-
-  if (result.scenario === "location_mismatch") {
-    return `Nao achei na cidade exata, mas esta opcao se destaca: ${base} Podemos avaliar entrega ou reserva remota.`;
-  }
-
-  return `Nao houve match exato, mas recomendo comecar por: ${base}`;
+const executeDeterministicSearch = async (
+  message: string,
+  overrides: Partial<SearchCarsInput>
+): Promise<SearchCarsResult> => {
+  const repository = new JsonCarRepository(env.CARS_DATA_PATH);
+  const useCase = new SearchCarsUseCase(repository);
+  return useCase.execute({
+    query: message,
+    ...overrides
+  });
 };
 
 export const runSalesConsultant = async (
   message: string,
-  overrides: Partial<SearchCarsInput> = {}
+  overrides: Partial<SearchCarsInput> = {},
+  sessionId = "default"
 ): Promise<ChatResponse> => {
-  const repository = new JsonCarRepository(env.CARS_DATA_PATH);
-  const useCase = new SearchCarsUseCase(repository);
-  const result = await useCase.execute({
-    query: message,
-    ...overrides
-  });
+  const workflow = mastra.getWorkflow("carSalesWorkflow");
+  const currentState = getSearchIntentState(sessionId);
 
   try {
-    const agent = mastra.getAgent("salesConsultant");
-    const generation = await agent.generate(buildPrompt(message, result));
-    const reply = generation.text?.trim();
-    if (reply && reply.length > 0) {
-      return { reply, result };
+    const run = await workflow.createRun({
+      resourceId: sessionId
+    });
+    const execution = await run.start({
+      inputData: {
+        sessionId,
+        message,
+        overrides
+      },
+      initialState: currentState
+    });
+
+    if (execution.status === "success") {
+      const output = execution.result;
+      saveSearchIntentState(sessionId, output.intentState);
+      return {
+        reply: output.reply,
+        result: output.result,
+        strategy: output.strategy,
+        intentState: output.intentState
+      };
     }
-    return { reply: buildFallbackReply(result), result };
+
+    const fallbackResult = await executeDeterministicSearch(message, overrides);
+    const fallbackState = searchIntentStateSchema.parse(
+      execution.state ?? currentState
+    );
+    saveSearchIntentState(sessionId, fallbackState);
+
+    return {
+      reply: buildFallbackReply(fallbackResult),
+      result: fallbackResult,
+      intentState: fallbackState
+    };
   } catch {
-    return { reply: buildFallbackReply(result), result };
+    const fallbackResult = await executeDeterministicSearch(message, overrides);
+    const fallbackState = currentState;
+    saveSearchIntentState(sessionId, fallbackState);
+
+    return {
+      reply: buildFallbackReply(fallbackResult),
+      result: fallbackResult,
+      intentState: fallbackState
+    };
   }
 };
