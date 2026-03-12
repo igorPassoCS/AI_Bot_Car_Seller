@@ -3,6 +3,7 @@ import { env } from "@/config/env";
 import { searchCarsTool } from "@/mastra/tools/search-cars-tool";
 
 export const researcherAgent = new Agent({
+  id: "researcher-agent",
   name: "The Researcher",
   instructions: `
 You are The Researcher, responsible for search precision and inventory truth.

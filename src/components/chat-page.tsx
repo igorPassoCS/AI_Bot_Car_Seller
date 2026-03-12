@@ -51,6 +51,8 @@ export function ChatPage() {
       .find((item) => item.role === "assistant" && item.payload);
     return lastAssistant?.payload;
   }, [messages]);
+  const shouldShowCars =
+    lastPayload?.strategy?.approach !== "rapport_and_discovery";
 
   const onSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -136,15 +138,21 @@ export function ChatPage() {
           <h2>Sugestoes de carros</h2>
           <p>
             {lastPayload
-              ? `Cenario identificado: ${lastPayload.scenario}`
+              ? shouldShowCars
+                ? `Cenario identificado: ${lastPayload.scenario}`
+                : "Vamos primeiro alinhar seu perfil de busca."
               : "Envie uma mensagem para receber sugestoes."}
           </p>
         </div>
 
         <div className="results__grid">
-          {lastPayload?.cars?.map((item) => (
-            <CarCard key={`${item.car.name}-${item.car.model}-${item.car.location}`} item={item} />
-          ))}
+          {shouldShowCars &&
+            lastPayload?.cars?.map((item) => (
+              <CarCard
+                key={`${item.car.name}-${item.car.model}-${item.car.location}`}
+                item={item}
+              />
+            ))}
         </div>
       </section>
     </main>

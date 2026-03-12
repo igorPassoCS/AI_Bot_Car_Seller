@@ -42,7 +42,7 @@ export const searchCarsTool = createTool({
     "Busca carros no estoque local. Tambem retorna alternativas quando preco ou localizacao nao batem.",
   inputSchema,
   outputSchema,
-  execute: async ({ context }) => {
+  execute: async (context) => {
     const repository = new JsonCarRepository(env.CARS_DATA_PATH);
     const useCase = new SearchCarsUseCase(repository);
     return useCase.execute(context);

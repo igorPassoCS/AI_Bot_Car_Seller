@@ -11,6 +11,8 @@ const budgetStrictPattern =
   /\b(nao passo|não passo|teto|maximo|máximo|limite|sem passar|can't exceed|cannot exceed|under)\b/i;
 const budgetFlexiblePattern =
   /\b(posso aumentar|tenho flexibilidade|consigo subir|aceito pagar mais|esticar o orcamento|esticar o orçamento|a little more|can stretch)\b/i;
+const greetingPattern =
+  /^\s*(oi|ola|olá|opa|aoba|e ai|e aí|bom dia|boa tarde|boa noite|hello|hi|hey)\W*$/i;
 
 const criteriaSchema = z.object({
   brand: z.string().optional(),
@@ -20,8 +22,21 @@ const criteriaSchema = z.object({
   limit: z.number().int().min(1).max(8).optional()
 });
 
+export const intentTypeSchema = z.enum(["greeting", "search", "refinement"]);
+export const missingFieldSchema = z.enum([
+  "brand",
+  "model",
+  "maxPrice",
+  "location"
+]);
+
+type MissingField = z.infer<typeof missingFieldSchema>;
+
 export const intentParsingSchema = z.object({
   normalizedMessage: z.string().min(1),
+  intentType: intentTypeSchema.default("search"),
+  needsMoreInfo: z.boolean().default(false),
+  missingFields: z.array(missingFieldSchema).default([]),
   criteria: criteriaSchema.default({}),
   behaviorSignals: z
     .object({
@@ -35,6 +50,65 @@ export const intentParsingSchema = z.object({
 });
 
 export type IntentParsingOutput = z.infer<typeof intentParsingSchema>;
+
+const hasAnyCriteria = (criteria: Partial<SearchCarsInput>): boolean => {
+  return Boolean(
+    criteria.brand || criteria.model || criteria.maxPrice || criteria.location
+  );
+};
+
+const inferMissingFields = (
+  criteria: Partial<SearchCarsInput>
+): MissingField[] => {
+  const missing: MissingField[] = [];
+  if (!criteria.brand) {
+    missing.push("brand");
+  }
+  if (!criteria.model) {
+    missing.push("model");
+  }
+  if (!criteria.maxPrice) {
+    missing.push("maxPrice");
+  }
+  if (!criteria.location) {
+    missing.push("location");
+  }
+  return missing;
+};
+
+export const normalizeIntentParsing = ({
+  message,
+  parsedIntent,
+  hasHistory
+}: {
+  message: string;
+  parsedIntent: IntentParsingOutput;
+  hasHistory: boolean;
+}): IntentParsingOutput => {
+  const hasCriteria = hasAnyCriteria(parsedIntent.criteria);
+  const heuristicGreeting =
+    greetingPattern.test(message) && !hasCriteria && !hasHistory;
+  const missingFields = inferMissingFields(parsedIntent.criteria);
+
+  const fallbackIntentType: z.infer<typeof intentTypeSchema> = hasHistory
+    ? "refinement"
+    : "search";
+
+  return intentParsingSchema.parse({
+    ...parsedIntent,
+    intentType: heuristicGreeting
+      ? "greeting"
+      : parsedIntent.intentType ?? fallbackIntentType,
+    needsMoreInfo:
+      heuristicGreeting ||
+      parsedIntent.needsMoreInfo ||
+      (!hasCriteria && !hasHistory),
+    missingFields:
+      parsedIntent.missingFields.length > 0
+        ? parsedIntent.missingFields
+        : missingFields
+  });
+};
 
 const toLocationSensitivity = (
   locationRejectionCount: number

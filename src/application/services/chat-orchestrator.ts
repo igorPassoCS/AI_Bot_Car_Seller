@@ -11,6 +11,9 @@ import {
 } from "@/application/services/search-intent-store";
 import { buildFallbackReply } from "@/application/services/sales-reply";
 
+const greetingPattern =
+  /^\s*(oi|ola|olá|opa|aoba|e ai|e aí|bom dia|boa tarde|boa noite|hello|hi|hey)\W*$/i;
+
 export type ChatResponse = {
   reply: string;
   result: SearchCarsResult;
@@ -21,12 +24,27 @@ export type ChatResponse = {
       | "location_mismatch"
       | "no_filtered_match";
     approach:
+      | "rapport_and_discovery"
       | "close_now"
       | "value_reframing"
       | "logistics_assurance"
       | "discovery_recovery";
   };
   intentState: SearchIntentState;
+};
+
+const buildDiscoveryFallbackReply = (): string => {
+  return "Oi! Que bom falar com voce. Para eu te recomendar com precisao, me diga marca/modelo, faixa de preco e cidade de preferencia.";
+};
+
+const isGreetingOnly = (
+  message: string,
+  overrides: Partial<SearchCarsInput>
+): boolean => {
+  const hasExplicitCriteria = Boolean(
+    overrides.brand || overrides.model || overrides.maxPrice || overrides.location
+  );
+  return greetingPattern.test(message) && !hasExplicitCriteria;
 };
 
 const executeDeterministicSearch = async (
@@ -73,11 +91,24 @@ export const runSalesConsultant = async (
       };
     }
 
-    const fallbackResult = await executeDeterministicSearch(message, overrides);
     const fallbackState = searchIntentStateSchema.parse(
       execution.state ?? currentState
     );
     saveSearchIntentState(sessionId, fallbackState);
+
+    if (isGreetingOnly(message, overrides)) {
+      return {
+        reply: buildDiscoveryFallbackReply(),
+        result: {
+          scenario: "no_filtered_match",
+          interpretedCriteria: {},
+          suggestions: []
+        },
+        intentState: fallbackState
+      };
+    }
+
+    const fallbackResult = await executeDeterministicSearch(message, overrides);
 
     return {
       reply: buildFallbackReply(fallbackResult),
@@ -85,9 +116,22 @@ export const runSalesConsultant = async (
       intentState: fallbackState
     };
   } catch {
-    const fallbackResult = await executeDeterministicSearch(message, overrides);
     const fallbackState = currentState;
     saveSearchIntentState(sessionId, fallbackState);
+
+    if (isGreetingOnly(message, overrides)) {
+      return {
+        reply: buildDiscoveryFallbackReply(),
+        result: {
+          scenario: "no_filtered_match",
+          interpretedCriteria: {},
+          suggestions: []
+        },
+        intentState: fallbackState
+      };
+    }
+
+    const fallbackResult = await executeDeterministicSearch(message, overrides);
 
     return {
       reply: buildFallbackReply(fallbackResult),

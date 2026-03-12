@@ -8,6 +8,8 @@ import { closerAgent } from "@/mastra/agents/closer-agent";
 import {
   evolveSearchIntentState,
   intentParsingSchema,
+  missingFieldSchema,
+  normalizeIntentParsing,
   resolveCriteriaWithState
 } from "@/application/services/search-intent-evolution";
 import { searchIntentStateSchema } from "@/domain/search-intent";
@@ -35,6 +37,7 @@ const strategySchema = z.object({
     "no_filtered_match"
   ]),
   approach: z.enum([
+    "rapport_and_discovery",
     "close_now",
     "value_reframing",
     "logistics_assurance",
@@ -108,6 +111,26 @@ const strategySelectionOutputSchema = z.object({
   intentState: searchIntentStateSchema
 });
 
+const buildDiscoveryReply = (
+  missingFields: Array<z.infer<typeof missingFieldSchema>>
+): string => {
+  const questionByField: Record<z.infer<typeof missingFieldSchema>, string> = {
+    brand: "Tem alguma marca de preferencia?",
+    model: "Ja tem algum modelo em mente?",
+    maxPrice: "Qual faixa de preco voce quer considerar?",
+    location: "Em qual cidade voce prefere encontrar o carro?"
+  };
+
+  const selected = (missingFields.length > 0
+    ? missingFields
+    : (["brand", "maxPrice", "location"] as const)
+  ).slice(0, 2);
+
+  const questions = selected.map((field) => questionByField[field]).join(" ");
+
+  return `Oi! Que bom falar com voce. Posso te ajudar a encontrar a melhor opcao sem pressa. ${questions}`.trim();
+};
+
 const intentParsingStep = createStep({
   id: "intent-parsing",
   inputSchema: workflowInputSchema,
@@ -117,6 +140,10 @@ const intentParsingStep = createStep({
     const prompt = `
 Interprete a mensagem do usuario para busca de carros.
 Retorne somente os campos do schema estruturado solicitado.
+Classifique:
+- intentType: greeting, search ou refinement
+- needsMoreInfo: true quando faltarem informacoes para seguir com recomendacao segura
+- missingFields: lista com brand, model, maxPrice e location ausentes
 
 Mensagem do usuario:
 ${inputData.message}
@@ -132,7 +159,11 @@ ${JSON.stringify(currentState, null, 2)}
         }
       });
 
-      const parsedIntent = intentParsingSchema.parse(generation.object);
+      const parsedIntent = normalizeIntentParsing({
+        message: inputData.message,
+        parsedIntent: intentParsingSchema.parse(generation.object),
+        hasHistory: currentState.turns > 0
+      });
 
       return {
         sessionId: inputData.sessionId,
@@ -145,13 +176,17 @@ ${JSON.stringify(currentState, null, 2)}
         sessionId: inputData.sessionId,
         message: inputData.message,
         overrides: inputData.overrides,
-        parsedIntent: intentParsingSchema.parse({
-          normalizedMessage: inputData.message,
-          criteria: inputData.overrides ?? {},
-          behaviorSignals: {
-            locationPreference: "unchanged",
-            budgetPreference: "unchanged"
-          }
+        parsedIntent: normalizeIntentParsing({
+          message: inputData.message,
+          hasHistory: currentState.turns > 0,
+          parsedIntent: intentParsingSchema.parse({
+            normalizedMessage: inputData.message,
+            criteria: inputData.overrides ?? {},
+            behaviorSignals: {
+              locationPreference: "unchanged",
+              budgetPreference: "unchanged"
+            }
+          })
         })
       };
     }
@@ -169,6 +204,34 @@ const dataRetrievalStep = createStep({
       inputData.parsedIntent.criteria,
       currentState
     );
+    const hasEffectiveCriteria = Boolean(
+      effectiveCriteria.brand ||
+        effectiveCriteria.model ||
+        effectiveCriteria.maxPrice ||
+        effectiveCriteria.location
+    );
+    const shouldSkipRetrieval =
+      inputData.parsedIntent.intentType === "greeting" ||
+      (inputData.parsedIntent.needsMoreInfo && !hasEffectiveCriteria);
+
+    if (shouldSkipRetrieval) {
+      return {
+        sessionId: inputData.sessionId,
+        message: inputData.message,
+        parsedIntent: inputData.parsedIntent,
+        effectiveCriteria,
+        result: workflowSearchResultSchema.parse({
+          scenario: "no_filtered_match",
+          interpretedCriteria: {
+            brand: effectiveCriteria.brand,
+            model: effectiveCriteria.model,
+            maxPrice: effectiveCriteria.maxPrice,
+            location: effectiveCriteria.location
+          },
+          suggestions: []
+        })
+      };
+    }
 
     const repository = new JsonCarRepository(env.CARS_DATA_PATH);
     const useCase = new SearchCarsUseCase(repository);
@@ -204,9 +267,16 @@ const strategySelectionStep = createStep({
       no_filtered_match: "discovery_recovery"
     };
 
+    const shouldUseDiscoveryApproach =
+      inputData.parsedIntent.intentType === "greeting" ||
+      (inputData.parsedIntent.needsMoreInfo &&
+        inputData.result.suggestions.length === 0);
+
     const strategy = {
       scenario: inputData.result.scenario,
-      approach: approachByScenario[inputData.result.scenario]
+      approach: shouldUseDiscoveryApproach
+        ? "rapport_and_discovery"
+        : approachByScenario[inputData.result.scenario]
     } as const;
 
     const nextState = evolveSearchIntentState({
@@ -231,6 +301,16 @@ const persuasiveResponseStep = createStep({
   inputSchema: strategySelectionOutputSchema,
   outputSchema: workflowOutputSchema,
   execute: async ({ inputData }) => {
+    if (inputData.strategy.approach === "rapport_and_discovery") {
+      return {
+        reply: buildDiscoveryReply(inputData.parsedIntent.missingFields),
+        result: inputData.result,
+        strategy: inputData.strategy,
+        intentState: inputData.intentState,
+        parsedIntent: inputData.parsedIntent
+      };
+    }
+
     const prompt = `
 Voce vai fechar uma conversa de venda com base no contexto abaixo.
 Responda em portugues brasileiro, com clareza, empatia e foco em conversao.
@@ -246,6 +326,10 @@ ${JSON.stringify(inputData.intentState, null, 2)}
 
 Resultado de busca:
 ${JSON.stringify(inputData.result, null, 2)}
+
+Importante:
+- Se a estrategia for rapport_and_discovery, acolha e faca perguntas curtas.
+- Nesse modo, nao tente fechar venda e nao pressione com CTA.
 `;
 
     try {
