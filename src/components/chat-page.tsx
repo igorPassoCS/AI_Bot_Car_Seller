@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { useMemo, useState, type SubmitEvent } from "react";
 import { CarCard, type CarCardData } from "@/components/car-card";
 
 type AssistantPayload = {
@@ -39,7 +39,7 @@ export function ChatPage() {
     return lastAssistant?.payload;
   }, [messages]);
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const message = input.trim();
     if (!message || loading) {

@@ -9,6 +9,7 @@ export type ChatResponse = {
   result: SearchCarsResult;
 };
 
+// Prompt part of the application:
 const buildPrompt = (message: string, result: SearchCarsResult): string => {
   return `
 User request:
