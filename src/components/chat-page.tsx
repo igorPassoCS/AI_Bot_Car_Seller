@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState, type SubmitEvent } from "react";
+import { useEffect, useRef, useState, type SubmitEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import { CarCard, type CarCardData } from "@/components/car-card";
 import { PrimaryButton } from "@/components/ui/primary-button";
@@ -88,22 +88,13 @@ export function ChatPage() {
   const [hasInteracted, setHasInteracted] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const lastPayload = useMemo(() => {
-    const lastAssistant = [...messages]
-      .reverse()
-      .find((item) => item.role === "assistant" && item.payload);
-    return lastAssistant?.payload;
-  }, [messages]);
-  const shouldShowCars =
-    hasInteracted && lastPayload?.strategy?.approach !== "rapport_and_discovery";
-
   useEffect(() => {
     if (!hasInteracted) {
       return;
     }
 
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, loading, hasInteracted, lastPayload?.cars?.length]);
+  }, [messages, loading, hasInteracted]);
 
   const onSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -173,7 +164,10 @@ export function ChatPage() {
                 orcamento e alternativas inteligentes sem pressa de venda.
               </p>
 
-              <motion.div layoutId="chat-composer" className="mt-10 w-full max-w-4xl">
+              <motion.div
+                layoutId="chat-composer"
+                className="mt-10 w-[96%] max-w-[1200px] sm:w-[94%] md:w-[92%]"
+              >
                 <ChatComposer
                   input={input}
                   loading={loading}
@@ -191,66 +185,58 @@ export function ChatPage() {
           {hasInteracted ? (
             <motion.section
               key="interaction"
-              className="relative z-10 mx-auto flex h-screen w-full max-w-6xl flex-col px-4 pb-44 pt-8 md:px-8 md:pt-10"
+              className="relative z-10 mx-auto flex h-screen w-[98%] max-w-[1280px] flex-col px-1 pb-44 pt-6 sm:w-[96%] sm:px-2 sm:pt-8 md:w-[95%] md:px-3 md:pt-10 lg:w-[94%] lg:px-4"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
             >
               <div className="klubi-scrollbar flex-1 space-y-4 overflow-y-auto rounded-3xl border border-black/10 bg-white/85 p-4 shadow-[0_10px_28px_rgba(26,29,31,0.08)] backdrop-blur md:p-6">
-                {messages.map((item, index) => (
-                  <div
-                    key={`${item.role}-${index}`}
-                    className={`max-w-[92%] rounded-3xl px-5 py-4 text-[15px] leading-relaxed ${
-                      item.role === "assistant"
-                        ? "mr-auto border border-black/10 bg-white text-[var(--klubi-text)]"
-                        : "ml-auto bg-[var(--klubi-secondary)] text-white"
-                    }`}
-                  >
-                    {item.role === "assistant" ? (
-                      // Mensagens do assistente continuam com suporte a markdown.
-                      <div className="klubi-markdown">
-                        <ReactMarkdown>{item.text}</ReactMarkdown>
+                {messages.map((item, index) => {
+                  const assistantPayload =
+                    item.role === "assistant" ? item.payload : undefined;
+                  const showCarsForMessage =
+                    assistantPayload?.strategy?.approach !== "rapport_and_discovery" &&
+                    (assistantPayload?.cars.length ?? 0) > 0;
+
+                  return (
+                    <div key={`${item.role}-${index}`} className="space-y-3">
+                      {showCarsForMessage ? (
+                        // Exibe os cards antes da persuasao para priorizar o produto no fluxo visual.
+                        <div className="-mx-1 flex gap-4 overflow-x-auto pb-2 pr-1 md:mx-0 md:grid md:grid-cols-2 md:overflow-visible xl:grid-cols-3">
+                          {(assistantPayload?.cars ?? []).map((carItem) => (
+                            <div
+                              key={`${carItem.car.name}-${carItem.car.model}-${carItem.car.location}-${index}`}
+                              className="min-w-[285px] flex-none md:min-w-0"
+                            >
+                              <CarCard item={carItem} />
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      <div
+                        className={`max-w-[95%] rounded-3xl px-5 py-4 text-[15px] leading-relaxed md:max-w-[90%] ${
+                          item.role === "assistant"
+                            ? "mr-auto border border-black/10 bg-white text-[var(--klubi-text)]"
+                            : "ml-auto bg-[var(--klubi-secondary)] text-white"
+                        }`}
+                      >
+                        {item.role === "assistant" ? (
+                          // Mensagens do assistente continuam com suporte a markdown.
+                          <div className="klubi-markdown">
+                            <ReactMarkdown>{item.text}</ReactMarkdown>
+                          </div>
+                        ) : (
+                          item.text
+                        )}
                       </div>
-                    ) : (
-                      item.text
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
                 {loading ? (
                   <div className="max-w-[92%] rounded-3xl border border-black/10 bg-white px-5 py-4 text-[15px] text-[var(--klubi-text-muted)]">
                     Analisando seu pedido...
                   </div>
-                ) : null}
-
-                {lastPayload ? (
-                  <section className="space-y-4 pt-2">
-                    <div className="rounded-3xl border border-black/10 bg-[var(--klubi-secondary)] px-5 py-4 text-white">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-white/70">
-                        Cenario atual
-                      </p>
-                      <p className="mt-1 text-lg font-medium">
-                        {shouldShowCars
-                          ? lastPayload.scenario
-                          : "rapport_and_discovery"}
-                      </p>
-                      <p className="mt-2 text-sm text-white/80">
-                        {shouldShowCars
-                          ? "Selecione uma opcao e posso ajudar com argumentos de negociacao."
-                          : "Vamos alinhar seu perfil antes de sugerir carros para manter precisao."}
-                      </p>
-                    </div>
-
-                    {shouldShowCars && lastPayload.cars.length > 0 ? (
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {lastPayload.cars.map((item) => (
-                          <CarCard
-                            key={`${item.car.name}-${item.car.model}-${item.car.location}`}
-                            item={item}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </section>
                 ) : null}
                 <div ref={bottomRef} />
               </div>
@@ -261,7 +247,7 @@ export function ChatPage() {
         {hasInteracted ? (
           <motion.div
             layoutId="chat-composer"
-            className="fixed bottom-6 left-1/2 z-20 w-full max-w-4xl -translate-x-1/2 px-4 md:px-8"
+            className="fixed bottom-6 left-1/2 z-20 w-[96%] max-w-[1200px] -translate-x-1/2 sm:w-[95%] md:w-[92%] lg:w-[90%]"
           >
             <ChatComposer
               input={input}
