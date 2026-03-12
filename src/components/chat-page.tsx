@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type SubmitEvent } from "react";
+import ReactMarkdown from "react-markdown";
 import { CarCard, type CarCardData } from "@/components/car-card";
 
 type AssistantPayload = {
@@ -113,7 +114,14 @@ export function ChatPage() {
               key={`${item.role}-${index}`}
               className={`bubble bubble--${item.role}`}
             >
-              {item.text}
+              {item.role === "assistant" ? (
+                // Mensagens do assistente podem conter markdown (negrito, listas e links).
+                <div className="bubble__markdown">
+                  <ReactMarkdown>{item.text}</ReactMarkdown>
+                </div>
+              ) : (
+                item.text
+              )}
             </div>
           ))}
           {loading ? <div className="bubble bubble--assistant">Analisando seu pedido...</div> : null}

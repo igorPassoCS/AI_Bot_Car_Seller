@@ -108,6 +108,37 @@ body {
   color: #f7fbff;
 }
 
+/* Mantem elementos markdown consistentes com o visual das bolhas. */
+.bubble__markdown {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.bubble__markdown p {
+  margin: 0;
+}
+
+.bubble__markdown :where(ul, ol) {
+  margin: 0;
+  padding-left: 1.05rem;
+  display: grid;
+  gap: 0.32rem;
+}
+
+.bubble__markdown li {
+  margin: 0;
+}
+
+.bubble__markdown strong {
+  font-weight: 700;
+}
+
+.bubble__markdown a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .chat__input {
   border-top: 1px solid var(--line);
   display: grid;
