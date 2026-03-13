@@ -158,8 +158,10 @@ export class SearchCarsUseCase {
       };
     }
 
-    if (relaxedFiltered.length > 0 && maxPrice) {
-      const aboveBudget = relaxedFiltered.filter((car) => car.price > maxPrice);
+    const priceMismatchPool = location ? baseFiltered : relaxedFiltered;
+
+    if (priceMismatchPool.length > 0 && maxPrice) {
+      const aboveBudget = priceMismatchPool.filter((car) => car.price > maxPrice);
       if (aboveBudget.length > 0) {
         // Para consultas apenas por teto de preco, mostra a melhor aproximacao para evitar ruido visual.
         const priceMismatchLimit = isPriceOnlySearch ? 1 : limit;

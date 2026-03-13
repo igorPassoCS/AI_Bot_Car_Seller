@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
+import Image from "next/image";
 import { useEffect, useRef, useState, type SubmitEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import { CarCard, type CarCardData } from "@/components/car-card";
@@ -47,12 +48,16 @@ type ChatComposerProps = {
 
 const quickActions = [
   {
-    label: "Quero um Kwid",
-    prompt: "Quero um Renault Kwid "
+    label: "Quero um Fiat Pulse",
+    prompt: "Quero um Fiat Pulse "
+  },
+  {
+    label: "boa tarde, no que voce pode me ajudar?",
+    prompt: "boa tarde, no que voce pode me ajudar?"
   },
   {
     label: "Essa opcao ta muito cara",
-    prompt: "A opcao que voce me ofereceu estao muito cara"
+    prompt: "A opcao que voce me ofereceu está muito cara, mostre opções de carro com um preço mais barato que esse"
   },
   {
     label: "Moro no Rio de Janeiro",
@@ -130,8 +135,8 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [hasInteracted, setHasInteracted] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const showQuickActions = !hasInteracted || messages.length < 4;
-  const isQuickActionsMinimized = hasInteracted;
+  const showQuickActions = true;
+  const isQuickActionsMinimized = false;
 
   useEffect(() => {
     if (!hasInteracted) {
@@ -197,11 +202,22 @@ export function ChatPage() {
       <main className="relative min-h-screen overflow-hidden bg-[var(--klubi-bg)] text-[var(--klubi-text)]">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_15%,rgba(255,184,0,0.28),transparent_30%),radial-gradient(circle_at_82%_12%,rgba(26,29,31,0.1),transparent_34%)]" />
 
+        <div className="pointer-events-none absolute left-1/2 top-6 z-20 w-[200px] -translate-x-1/2 sm:top-8">
+          <Image
+            src="/images/cupom-de-desconto-klubi-logo-200-115.webp"
+            alt="Klubi"
+            width={200}
+            height={115}
+            className="h-auto w-full object-contain"
+            priority
+          />
+        </div>
+
         <AnimatePresence>
           {!hasInteracted ? (
             <motion.section
               key="discovery"
-              className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4 text-center md:px-8"
+              className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4 pb-20 pt-28 text-center md:px-8 md:pt-32"
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -18 }}
@@ -242,7 +258,7 @@ export function ChatPage() {
           {hasInteracted ? (
             <motion.section
               key="interaction"
-              className="relative z-10 mx-auto flex h-screen w-[98%] max-w-[1280px] flex-col px-1 pb-44 pt-6 sm:w-[96%] sm:px-2 sm:pt-8 md:w-[95%] md:px-3 md:pt-10 lg:w-[94%] lg:px-4"
+              className="relative z-10 mx-auto flex h-screen w-[98%] max-w-[1280px] flex-col px-1 pb-44 pt-28 sm:w-[96%] sm:px-2 sm:pt-32 md:w-[95%] md:px-3 lg:w-[94%] lg:px-4"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
@@ -319,6 +335,20 @@ export function ChatPage() {
             />
           </motion.div>
         ) : null}
+
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
+          <p className="pointer-events-auto text-center text-xs text-[var(--klubi-text-muted)]">
+            made with &lt;3 by{" "}
+            <a
+              href="https://www.linkedin.com/in/igor-passo"
+              target="_blank"
+              rel="noreferrer"
+              className="font-semibold text-[var(--klubi-secondary)] underline decoration-orange-400 underline-offset-4 transition hover:text-[var(--klubi-primary)]"
+            >
+              Igor Passo
+            </a>
+          </p>
+        </div>
       </main>
     </LayoutGroup>
   );
