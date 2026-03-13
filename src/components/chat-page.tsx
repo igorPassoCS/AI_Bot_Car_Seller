@@ -48,20 +48,20 @@ type ChatComposerProps = {
 
 const quickActions = [
   {
+    label: "boa tarde, no que voce pode me ajudar?",
+    prompt: "boa tarde, no que voce pode me ajudar?"
+  },  
+  {
     label: "Quero um Fiat Pulse",
     prompt: "Quero um Fiat Pulse "
   },
   {
-    label: "boa tarde, no que voce pode me ajudar?",
-    prompt: "boa tarde, no que voce pode me ajudar?"
-  },
-  {
     label: "Essa opcao ta muito cara",
-    prompt: "A opcao que voce me ofereceu está muito cara, mostre opções de carro com um preço mais barato que esse"
+    prompt: "A opcao que voce me ofereceu está muito cara"
   },
   {
     label: "Moro no Rio de Janeiro",
-    prompt: "moro na cidade do Rio de Janeiro?"
+    prompt: "moro na cidade do Rio de Janeiro, talvez isso seja um problema"
   }
 ] as const;
 
