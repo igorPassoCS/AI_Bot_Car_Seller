@@ -60,7 +60,19 @@ const buildSellingPoints = (
   ];
 };
 
-const orderByPriceDistance = (cars: Car[], maxPrice?: number): Car[] => {
+const orderByPriceDistance = (
+  cars: Car[],
+  maxPrice?: number,
+  minPrice?: number
+): Car[] => {
+  if (minPrice && !maxPrice) {
+    return [...cars].sort((a, b) => {
+      const distanceA = Math.abs(a.price - minPrice);
+      const distanceB = Math.abs(b.price - minPrice);
+      return distanceA - distanceB;
+    });
+  }
+
   if (!maxPrice) {
     return [...cars].sort((a, b) => a.price - b.price);
   }
@@ -81,10 +93,15 @@ export class SearchCarsUseCase {
     const brand = input.brand ?? inferred.brand;
     const model = input.model ?? inferred.model;
     const location = input.location ?? inferred.location;
+    const minPrice = input.minPrice;
     const maxPrice = input.maxPrice ?? inferred.maxPrice;
     const limit = input.limit ?? 3;
-    const hasActiveCriteria = Boolean(brand || model || location || maxPrice);
-    const isPriceOnlySearch = Boolean(maxPrice && !brand && !model && !location);
+    const hasActiveCriteria = Boolean(
+      brand || model || location || minPrice || maxPrice
+    );
+    const isPriceOnlySearch = Boolean(
+      (minPrice || maxPrice) && !brand && !model && !location
+    );
 
     const baseFiltered = allCars.filter(
       (car) =>
@@ -100,15 +117,16 @@ export class SearchCarsUseCase {
     );
 
     const exact = baseFiltered.filter((car) =>
-      maxPrice ? car.price <= maxPrice : true
+      (minPrice ? car.price >= minPrice : true) &&
+      (maxPrice ? car.price <= maxPrice : true)
     );
 
     // Evita falso positivo de "match exato" quando o usuario ainda nao definiu filtros reais.
     if (hasActiveCriteria && exact.length > 0) {
       return {
         scenario: "exact_match",
-        interpretedCriteria: { brand, model, location, maxPrice },
-        suggestions: orderByPriceDistance(exact, maxPrice)
+        interpretedCriteria: { brand, model, location, minPrice, maxPrice },
+        suggestions: orderByPriceDistance(exact, maxPrice, minPrice)
           .slice(0, limit)
           .map((car) => ({
             car,
@@ -125,8 +143,8 @@ export class SearchCarsUseCase {
         const priceMismatchLimit = isPriceOnlySearch ? 1 : limit;
         return {
           scenario: "price_mismatch",
-          interpretedCriteria: { brand, model, location, maxPrice },
-          suggestions: orderByPriceDistance(aboveBudget, maxPrice)
+          interpretedCriteria: { brand, model, location, minPrice, maxPrice },
+          suggestions: orderByPriceDistance(aboveBudget, maxPrice, minPrice)
             .slice(0, priceMismatchLimit)
             .map((car) => ({
               car,
@@ -149,8 +167,8 @@ export class SearchCarsUseCase {
       if (differentLocation.length > 0) {
         return {
           scenario: "location_mismatch",
-          interpretedCriteria: { brand, model, location, maxPrice },
-          suggestions: orderByPriceDistance(differentLocation, maxPrice)
+          interpretedCriteria: { brand, model, location, minPrice, maxPrice },
+          suggestions: orderByPriceDistance(differentLocation, maxPrice, minPrice)
             .slice(0, limit)
             .map((car) => ({
               car,
@@ -166,10 +184,19 @@ export class SearchCarsUseCase {
       }
     }
 
-    const fallback = orderByPriceDistance(allCars, maxPrice).slice(0, limit);
+    const fallbackBase = allCars.filter((car) =>
+      (minPrice ? car.price >= minPrice : true) &&
+      (maxPrice ? car.price <= maxPrice : true)
+    );
+    const fallbackPool = fallbackBase.length > 0 ? fallbackBase : allCars;
+    const fallback = orderByPriceDistance(
+      fallbackPool,
+      maxPrice,
+      minPrice
+    ).slice(0, limit);
     return {
       scenario: "no_filtered_match",
-      interpretedCriteria: { brand, model, location, maxPrice },
+      interpretedCriteria: { brand, model, location, minPrice, maxPrice },
       suggestions: fallback.map((car) => ({
         car,
         matchType: "partial_match",

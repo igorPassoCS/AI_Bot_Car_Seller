@@ -9,6 +9,7 @@ const bodySchema = z.object({
     .object({
       brand: z.string().optional(),
       model: z.string().optional(),
+      minPrice: z.number().positive().optional(),
       maxPrice: z.number().positive().optional(),
       location: z.string().optional(),
       limit: z.number().int().min(1).max(8).optional()

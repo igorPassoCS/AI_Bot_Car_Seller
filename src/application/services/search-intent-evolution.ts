@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { SearchCarsInput, SearchCarsResult } from "@/domain/car";
 import type { SearchIntentState } from "@/domain/search-intent";
+import type { SessionState } from "@/domain/session-state";
 import { searchIntentStateSchema } from "@/domain/search-intent";
 
 const locationStrictPattern =
@@ -14,9 +15,17 @@ const budgetFlexiblePattern =
 const greetingPattern =
   /^\s*(oi|ola|olá|opa|aoba|e ai|e aí|bom dia|boa tarde|boa noite|hello|hi|hey)\W*$/i;
 
+const normalize = (value: string): string =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
 const criteriaSchema = z.object({
   brand: z.string().optional(),
   model: z.string().optional(),
+  minPrice: z.number().positive().optional(),
   maxPrice: z.number().positive().optional(),
   location: z.string().optional(),
   limit: z.number().int().min(1).max(8).optional()
@@ -53,7 +62,11 @@ export type IntentParsingOutput = z.infer<typeof intentParsingSchema>;
 
 const hasAnyCriteria = (criteria: Partial<SearchCarsInput>): boolean => {
   return Boolean(
-    criteria.brand || criteria.model || criteria.maxPrice || criteria.location
+    criteria.brand ||
+      criteria.model ||
+      criteria.minPrice ||
+      criteria.maxPrice ||
+      criteria.location
   );
 };
 
@@ -67,7 +80,7 @@ const inferMissingFields = (
   if (!criteria.model) {
     missing.push("model");
   }
-  if (!criteria.maxPrice) {
+  if (!criteria.minPrice && !criteria.maxPrice) {
     missing.push("maxPrice");
   }
   if (!criteria.location) {
@@ -136,38 +149,159 @@ const toBudgetFlexibility = (
 
 const clampToZero = (value: number): number => Math.max(0, value);
 
-const firstDefined = <T>(
-  ...values: Array<T | undefined>
-): T | undefined => values.find((value) => value !== undefined);
+const detectRelativePricePreference = (
+  message: string
+): "higher" | "lower" | undefined => {
+  if (/mais caro|more expensive|acima desse|acima deste|superior a esse/i.test(message)) {
+    return "higher";
+  }
+
+  if (/mais barato|cheaper|menos caro|abaixo desse|abaixo deste|inferior a esse/i.test(message)) {
+    return "lower";
+  }
+
+  return undefined;
+};
+
+const firstMeaningfulString = (
+  ...values: Array<string | undefined>
+): string | undefined => {
+  return values.find((value) => value !== undefined && value.trim().length > 0);
+};
+
+const firstMeaningfulNumber = (
+  ...values: Array<number | undefined>
+): number | undefined => {
+  return values.find((value) => value !== undefined);
+};
+
+export const inferContextualCriteriaFromState = (
+  message: string,
+  state: SessionState
+): Partial<SearchCarsInput> => {
+  const relativePrice = detectRelativePricePreference(message);
+
+  if (!state.lastViewedCar || !relativePrice) {
+    return {};
+  }
+
+  if (relativePrice === "higher") {
+    return {
+      minPrice: state.lastViewedCar.price + 1,
+      maxPrice: undefined
+    };
+  }
+
+  return {
+    minPrice: undefined,
+    maxPrice: Math.max(state.lastViewedCar.price - 1, 1)
+  };
+};
 
 export const resolveCriteriaWithState = (
   overrides: Partial<SearchCarsInput>,
   parsedCriteria: Partial<SearchCarsInput>,
-  state: SearchIntentState
+  state: SessionState
 ): Partial<SearchCarsInput> => {
+  const relativePricePreference = detectRelativePricePreference(
+    overrides.query ?? parsedCriteria.query ?? ""
+  );
+  const contextualCriteria = inferContextualCriteriaFromState(
+    overrides.query ?? parsedCriteria.query ?? "",
+    state
+  );
+  const nextMinPrice = firstMeaningfulNumber(
+    overrides.minPrice,
+    parsedCriteria.minPrice,
+    contextualCriteria.minPrice,
+    ...(relativePricePreference === "lower"
+      ? []
+      : [
+          state.currentFilters.minPrice,
+          state.intentState.preferredCriteria.minPrice
+        ])
+  );
+  const nextMaxPrice = firstMeaningfulNumber(
+    overrides.maxPrice,
+    parsedCriteria.maxPrice,
+    contextualCriteria.maxPrice,
+    ...(relativePricePreference === "higher"
+      ? []
+      : [
+          state.currentFilters.maxPrice,
+          state.intentState.preferredCriteria.maxPrice
+        ])
+  );
+
   return {
-    brand: firstDefined(
+    query: firstMeaningfulString(
+      overrides.query,
+      parsedCriteria.query,
+      state.currentFilters.query
+    ),
+    brand: firstMeaningfulString(
       overrides.brand,
       parsedCriteria.brand,
-      state.preferredCriteria.brand
+      state.currentFilters.brand,
+      state.intentState.preferredCriteria.brand
     ),
-    model: firstDefined(
+    model: firstMeaningfulString(
       overrides.model,
       parsedCriteria.model,
-      state.preferredCriteria.model
+      state.currentFilters.model,
+      state.intentState.preferredCriteria.model
     ),
-    location: firstDefined(
+    location: firstMeaningfulString(
       overrides.location,
       parsedCriteria.location,
-      state.preferredCriteria.location
+      state.currentFilters.location,
+      state.intentState.preferredCriteria.location
     ),
-    maxPrice: firstDefined(
-      overrides.maxPrice,
-      parsedCriteria.maxPrice,
-      state.preferredCriteria.maxPrice
+    minPrice:
+      nextMinPrice && nextMaxPrice && nextMinPrice > nextMaxPrice
+        ? undefined
+        : nextMinPrice,
+    maxPrice:
+      nextMaxPrice && nextMinPrice && nextMaxPrice < nextMinPrice
+        ? undefined
+        : nextMaxPrice,
+    limit: firstMeaningfulNumber(
+      overrides.limit,
+      parsedCriteria.limit,
+      state.currentFilters.limit,
+      3
     ),
-    limit: firstDefined(overrides.limit, parsedCriteria.limit, 3)
   };
+};
+
+export const shouldRunInventorySearch = ({
+  message,
+  parsedIntent,
+  effectiveCriteria,
+  state
+}: {
+  message: string;
+  parsedIntent: IntentParsingOutput;
+  effectiveCriteria: Partial<SearchCarsInput>;
+  state: SessionState;
+}): boolean => {
+  if (parsedIntent.intentType === "greeting") {
+    return false;
+  }
+
+  const normalizedMessage = normalize(message);
+  const hasCriteria = hasAnyCriteria(effectiveCriteria);
+  const hasRelativeReference =
+    Boolean(state.lastViewedCar) &&
+    /\b(esse|este|this one|mais caro|mais barato|more expensive|cheaper)\b/.test(
+      normalizedMessage
+    );
+  const hasSearchVerb =
+    /\b(quero|buscar|busca|encontre|encontrar|procuro|procurando|mostrar|mostre|compare|comparar|versus|vs|similar)\b/.test(
+      normalizedMessage
+    );
+
+  return hasCriteria || hasRelativeReference || hasSearchVerb;
 };
 
 export const evolveSearchIntentState = ({

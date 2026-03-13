@@ -11,6 +11,7 @@ export const preferredCriteriaSchema = z.object({
   brand: z.string().optional(),
   model: z.string().optional(),
   location: z.string().optional(),
+  minPrice: z.number().positive().optional(),
   maxPrice: z.number().positive().optional()
 });
 

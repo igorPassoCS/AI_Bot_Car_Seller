@@ -16,6 +16,7 @@ type AssistantPayload = {
   interpretedCriteria: {
     brand?: string;
     model?: string;
+    minPrice?: number;
     maxPrice?: number;
     location?: string;
   };

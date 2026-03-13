@@ -10,6 +10,7 @@ const inputSchema = z.object({
   query: z.string().trim().min(1).nullable(),
   brand: z.string().trim().min(1).nullable(),
   model: z.string().trim().min(1).nullable(),
+  minPrice: z.number().positive().nullable(),
   maxPrice: z.number().positive().nullable(),
   location: z.string().trim().min(1).nullable(),
   limit: z.number().int().min(1).max(8).nullable()
@@ -20,6 +21,7 @@ const outputSchema = z.object({
   interpretedCriteria: z.object({
     brand: z.string().optional(),
     model: z.string().optional(),
+    minPrice: z.number().optional(),
     maxPrice: z.number().optional(),
     location: z.string().optional()
   }),
@@ -49,6 +51,7 @@ const normalizeToolInput = (
     query: toOptional(input.query),
     brand: toOptional(input.brand),
     model: toOptional(input.model),
+    minPrice: toOptional(input.minPrice),
     maxPrice: toOptional(input.maxPrice),
     location: toOptional(input.location),
     limit: toOptional(input.limit)

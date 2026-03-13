@@ -52,6 +52,7 @@ export type SearchCarsInput = {
   query?: string;
   brand?: string;
   model?: string;
+  minPrice?: number;
   maxPrice?: number;
   location?: string;
   limit?: number;
@@ -62,6 +63,7 @@ export type SearchCarsResult = {
   interpretedCriteria: {
     brand?: string;
     model?: string;
+    minPrice?: number;
     maxPrice?: number;
     location?: string;
   };

@@ -2,24 +2,29 @@ import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { env } from "@/config/env";
 import { imageSourceSchema } from "@/domain/car";
+import { sessionStateSchema } from "@/domain/session-state";
 import { JsonCarRepository } from "@/infrastructure/repositories/json-car-repository";
-import { SearchCarsUseCase } from "@/application/use-cases/search-cars";
 import { researcherAgent } from "@/mastra/agents/researcher-agent";
 import { closerAgent } from "@/mastra/agents/closer-agent";
+import { searchCarsTool } from "@/mastra/tools/search-cars-tool";
 import {
   evolveSearchIntentState,
+  inferContextualCriteriaFromState,
   intentParsingSchema,
   missingFieldSchema,
   normalizeIntentParsing,
-  resolveCriteriaWithState
+  resolveCriteriaWithState,
+  shouldRunInventorySearch
 } from "@/application/services/search-intent-evolution";
 import { parseCriteriaFromMessage } from "@/application/services/criteria-parser";
 import { searchIntentStateSchema } from "@/domain/search-intent";
 import { buildFallbackReply } from "@/application/services/sales-reply";
 
 const searchCriteriaSchema = z.object({
+  query: z.string().optional(),
   brand: z.string().optional(),
   model: z.string().optional(),
+  minPrice: z.number().positive().optional(),
   maxPrice: z.number().positive().optional(),
   location: z.string().optional(),
   limit: z.number().int().min(1).max(8).optional()
@@ -57,6 +62,7 @@ const workflowSearchResultSchema = z.object({
   interpretedCriteria: z.object({
     brand: z.string().optional(),
     model: z.string().optional(),
+    minPrice: z.number().optional(),
     maxPrice: z.number().optional(),
     location: z.string().optional()
   }),
@@ -83,6 +89,7 @@ const workflowSearchResultSchema = z.object({
 const workflowOutputSchema = z.object({
   reply: z.string().min(1),
   result: workflowSearchResultSchema,
+  effectiveCriteria: searchCriteriaSchema,
   strategy: strategySchema,
   intentState: searchIntentStateSchema,
   parsedIntent: intentParsingSchema
@@ -138,7 +145,7 @@ const intentParsingStep = createStep({
   inputSchema: workflowInputSchema,
   outputSchema: intentParsingOutputSchema,
   execute: async ({ inputData, state }) => {
-    const currentState = searchIntentStateSchema.parse(state ?? {});
+    const currentState = sessionStateSchema.parse(state ?? {});
     const prompt = `
 Interprete a mensagem do usuario para busca de carros.
 Retorne somente os campos do schema estruturado solicitado.
@@ -146,11 +153,15 @@ Classifique:
 - intentType: greeting, search ou refinement
 - needsMoreInfo: true quando faltarem informacoes para seguir com recomendacao segura
 - missingFields: lista com brand, model, maxPrice e location ausentes
+- Se o usuario disser "mais caro que esse", "mais barato que esse", "acima desse" ou equivalente,
+  use o Current State para preencher criteria.minPrice ou criteria.maxPrice com base no lastViewedCar.price.
+- Preserve os filtros atuais quando o usuario estiver refinando a busca, a menos que ele troque marca,
+  modelo, cidade ou faixa de preco explicitamente.
 
 Mensagem do usuario:
 ${inputData.message}
 
-Estado atual da intencao:
+Current State:
 ${JSON.stringify(currentState, null, 2)}
 `;
 
@@ -164,7 +175,7 @@ ${JSON.stringify(currentState, null, 2)}
       const parsedIntent = normalizeIntentParsing({
         message: inputData.message,
         parsedIntent: intentParsingSchema.parse(generation.object),
-        hasHistory: currentState.turns > 0
+        hasHistory: currentState.intentState.turns > 0
       });
 
       return {
@@ -180,10 +191,13 @@ ${JSON.stringify(currentState, null, 2)}
         overrides: inputData.overrides,
         parsedIntent: normalizeIntentParsing({
           message: inputData.message,
-          hasHistory: currentState.turns > 0,
+          hasHistory: currentState.intentState.turns > 0,
           parsedIntent: intentParsingSchema.parse({
             normalizedMessage: inputData.message,
-            criteria: inputData.overrides ?? {},
+            criteria: {
+              ...inferContextualCriteriaFromState(inputData.message, currentState),
+              ...inputData.overrides
+            },
             behaviorSignals: {
               locationPreference: "unchanged",
               budgetPreference: "unchanged"
@@ -200,29 +214,31 @@ const dataRetrievalStep = createStep({
   inputSchema: intentParsingOutputSchema,
   outputSchema: dataRetrievalOutputSchema,
   execute: async ({ inputData, state }) => {
-    const currentState = searchIntentStateSchema.parse(state ?? {});
+    const currentState = sessionStateSchema.parse(state ?? {});
     const repository = new JsonCarRepository(env.CARS_DATA_PATH);
     const allCars = await repository.getAllCars();
     const inferredCriteria = parseCriteriaFromMessage(allCars, inputData.message);
     const normalizedParsedCriteria = {
+      query: inputData.message,
       ...inferredCriteria,
+      ...inferContextualCriteriaFromState(inputData.message, currentState),
       ...inputData.parsedIntent.criteria
     };
 
     const effectiveCriteria = resolveCriteriaWithState(
-      inputData.overrides ?? {},
+      {
+        query: inputData.message,
+        ...(inputData.overrides ?? {})
+      },
       normalizedParsedCriteria,
       currentState
     );
-    const hasEffectiveCriteria = Boolean(
-      effectiveCriteria.brand ||
-        effectiveCriteria.model ||
-        effectiveCriteria.maxPrice ||
-        effectiveCriteria.location
-    );
-    const shouldSkipRetrieval =
-      inputData.parsedIntent.intentType === "greeting" ||
-      (inputData.parsedIntent.needsMoreInfo && !hasEffectiveCriteria);
+    const shouldSkipRetrieval = !shouldRunInventorySearch({
+      message: inputData.message,
+      parsedIntent: inputData.parsedIntent,
+      effectiveCriteria,
+      state: currentState
+    });
 
     if (shouldSkipRetrieval) {
       return {
@@ -235,6 +251,7 @@ const dataRetrievalStep = createStep({
           interpretedCriteria: {
             brand: effectiveCriteria.brand,
             model: effectiveCriteria.model,
+            minPrice: effectiveCriteria.minPrice,
             maxPrice: effectiveCriteria.maxPrice,
             location: effectiveCriteria.location
           },
@@ -243,11 +260,21 @@ const dataRetrievalStep = createStep({
       };
     }
 
-    const useCase = new SearchCarsUseCase(repository);
-    const result = await useCase.execute({
+    // Para intents de busca ou comparacao, a recuperacao passa sempre pela tool.
+    const executeSearchCars = searchCarsTool.execute;
+    if (!executeSearchCars) {
+      throw new Error("A tool searchCars nao possui executor configurado.");
+    }
+
+    const result = await executeSearchCars({
       query: inputData.message,
-      ...effectiveCriteria
-    });
+      brand: effectiveCriteria.brand ?? null,
+      model: effectiveCriteria.model ?? null,
+      minPrice: effectiveCriteria.minPrice ?? null,
+      maxPrice: effectiveCriteria.maxPrice ?? null,
+      location: effectiveCriteria.location ?? null,
+      limit: effectiveCriteria.limit ?? null
+    }, {});
 
     return {
       sessionId: inputData.sessionId,
@@ -264,7 +291,7 @@ const strategySelectionStep = createStep({
   inputSchema: dataRetrievalOutputSchema,
   outputSchema: strategySelectionOutputSchema,
   execute: async ({ inputData, state, setState }) => {
-    const currentState = searchIntentStateSchema.parse(state ?? {});
+    const currentState = sessionStateSchema.parse(state ?? {});
 
     const approachByScenario: Record<
       z.infer<typeof strategySchema>["scenario"],
@@ -288,19 +315,27 @@ const strategySelectionStep = createStep({
         : approachByScenario[inputData.result.scenario]
     } as const;
 
-    const nextState = evolveSearchIntentState({
-      previousState: currentState,
+    const nextIntentState = evolveSearchIntentState({
+      previousState: currentState.intentState,
       userMessage: inputData.message,
       parsedIntent: inputData.parsedIntent,
       result: inputData.result
     });
 
-    await setState(nextState);
+    await setState({
+      ...currentState,
+      intentState: nextIntentState,
+      currentFilters: {
+        ...currentState.currentFilters,
+        ...inputData.effectiveCriteria
+      },
+      lastViewedCar: inputData.result.suggestions[0]?.car ?? currentState.lastViewedCar
+    });
 
     return {
       ...inputData,
       strategy,
-      intentState: nextState
+      intentState: nextIntentState
     };
   }
 });
@@ -314,6 +349,7 @@ const persuasiveResponseStep = createStep({
       return {
         reply: buildDiscoveryReply(inputData.parsedIntent.missingFields),
         result: inputData.result,
+        effectiveCriteria: inputData.effectiveCriteria,
         strategy: inputData.strategy,
         intentState: inputData.intentState,
         parsedIntent: inputData.parsedIntent
@@ -349,6 +385,7 @@ Importante:
         return {
           reply,
           result: inputData.result,
+          effectiveCriteria: inputData.effectiveCriteria,
           strategy: inputData.strategy,
           intentState: inputData.intentState,
           parsedIntent: inputData.parsedIntent
@@ -361,6 +398,7 @@ Importante:
     return {
       reply: buildFallbackReply(inputData.result),
       result: inputData.result,
+      effectiveCriteria: inputData.effectiveCriteria,
       strategy: inputData.strategy,
       intentState: inputData.intentState,
       parsedIntent: inputData.parsedIntent
@@ -372,7 +410,7 @@ export const carSalesWorkflow = createWorkflow({
   id: "car-sales-workflow",
   inputSchema: workflowInputSchema,
   outputSchema: workflowOutputSchema,
-  stateSchema: searchIntentStateSchema
+  stateSchema: sessionStateSchema
 })
   .then(intentParsingStep)
   .then(dataRetrievalStep)
