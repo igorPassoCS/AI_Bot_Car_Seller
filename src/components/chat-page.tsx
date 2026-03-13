@@ -202,7 +202,7 @@ export function ChatPage() {
       <main className="relative min-h-screen overflow-hidden bg-[var(--klubi-bg)] text-[var(--klubi-text)]">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_10%_15%,rgba(255,184,0,0.28),transparent_30%),radial-gradient(circle_at_82%_12%,rgba(26,29,31,0.1),transparent_34%)]" />
 
-        <div className="pointer-events-none absolute left-1/2 top-6 z-20 w-[200px] -translate-x-1/2 sm:top-8">
+        <div className="pointer-events-none absolute left-1/2 top-[0.9%] z-20 w-[26%] max-w-[200px] min-w-[140px] -translate-x-1/2 sm:top-[0.6%] sm:w-[18%]">
           <Image
             src="/images/cupom-de-desconto-klubi-logo-200-115.webp"
             alt="Klubi"
@@ -217,7 +217,7 @@ export function ChatPage() {
           {!hasInteracted ? (
             <motion.section
               key="discovery"
-              className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4 pb-20 pt-28 text-center md:px-8 md:pt-32"
+              className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4 pb-20 pt-[12%] text-center md:px-8 md:pt-[9%]"
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -18 }}
@@ -238,7 +238,7 @@ export function ChatPage() {
 
               <motion.div
                 layoutId="chat-composer"
-                className="mt-10 w-[96%] max-w-[1200px] sm:w-[94%] md:w-[92%]"
+                className="mt-10 w-[99%] max-w-[1380px] sm:w-[98%] md:w-[97%] lg:w-[96%]"
               >
                 <ChatComposer
                   input={input}
@@ -260,7 +260,7 @@ export function ChatPage() {
           {hasInteracted ? (
             <motion.section
               key="interaction"
-              className="relative z-10 mx-auto flex h-screen w-[98%] max-w-[1280px] flex-col px-1 pb-44 pt-28 sm:w-[96%] sm:px-2 sm:pt-32 md:w-[95%] md:px-3 lg:w-[94%] lg:px-4"
+              className="relative z-10 mx-auto flex h-screen w-[99%] max-w-[1380px] flex-col px-[0.8%] pb-44 pt-[8.5%] sm:w-[98%] sm:px-[1.2%] sm:pt-[6.8%] md:w-[97%] md:px-[1.5%] md:pt-[5.4%] lg:w-[96%] lg:px-[1.8%] lg:pt-[4.8%]"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
@@ -322,7 +322,7 @@ export function ChatPage() {
         {hasInteracted ? (
           <motion.div
             layoutId="chat-composer"
-            className="fixed bottom-6 left-1/2 z-20 w-[96%] max-w-[1200px] -translate-x-1/2 sm:w-[95%] md:w-[92%] lg:w-[90%]"
+            className="fixed bottom-6 left-1/2 z-20 w-[99%] max-w-[1380px] -translate-x-1/2 sm:w-[98%] md:w-[97%] lg:w-[96%]"
           >
             <ChatComposer
               input={input}
