@@ -12,9 +12,23 @@ import {
   parseCriteriaFromMessage,
   resolveLocationFromMessage
 } from "@/application/services/criteria-parser";
+import {
+  buildCarReferenceKey,
+  getAlternativeRecentSuggestedCar,
+  getComparisonAnchorCar,
+  getRecentSuggestedCarByPosition
+} from "@/application/services/search-session-state";
 
 const locationStrictPattern =
   /\b(nao quero|não quero|somente|apenas|so em|s[oó] em|must be|only in|nao aceito outra cidade|não aceito outra cidade|nao vou viajar|não vou viajar|tem que ser)\b/i;
+const secondOptionPattern = /\b(segundo|segunda|2o|2a|2º|2ª)\b/i;
+const thirdOptionPattern = /\b(terceiro|terceira|3o|3a|3º|3ª)\b/i;
+const firstOptionPattern = /\b(primeiro|primeira|1o|1a|1º|1ª)\b/i;
+const alternativeOptionPattern =
+  /\b(aquele outro|o outro|outra dessas|outro desses|me mostra outro|mostre outro|algum outro)\b/i;
+const brandReferencePattern = /\b(dessa empresa|dessa marca|desse fabricante)\b/i;
+const locationReferencePattern = /\b(dessa cidade|desse lugar|desse local)\b/i;
+const modelReferencePattern = /\b(desse modelo)\b/i;
 
 // Normaliza texto para comparacoes entre filtros antigos e novos.
 const normalize = (value: string): string =>
@@ -33,15 +47,31 @@ const uniqueItems = (items: string[]): string[] => {
   );
 };
 
-// Cria a mesma chave usada para rastrear tentativas de persuasao por carro.
-const buildCarReferenceKey = ({
-  name,
-  model
-}: {
-  name: string;
-  model: string;
-}): string => {
-  return `${name} ${model}`.trim();
+// Resolve referencias posicionais ou relativas com base no ultimo conjunto exibido.
+const resolveReferencedCarFromMessage = (
+  state: SessionState,
+  message: string
+) => {
+  if (secondOptionPattern.test(message)) {
+    return getRecentSuggestedCarByPosition(state, 1);
+  }
+
+  if (thirdOptionPattern.test(message)) {
+    return getRecentSuggestedCarByPosition(state, 2);
+  }
+
+  if (firstOptionPattern.test(message)) {
+    return getRecentSuggestedCarByPosition(state, 0);
+  }
+
+  if (alternativeOptionPattern.test(message)) {
+    return getAlternativeRecentSuggestedCar(
+      state,
+      state.referenceCar ?? state.lastViewedCar
+    );
+  }
+
+  return getComparisonAnchorCar(state);
 };
 
 // Define se a busca ainda pode oferecer mismatch ou se deve ficar no mesmo escopo.
@@ -131,18 +161,43 @@ export const resolveSearchRequestFromState = ({
     ? {
         ...state,
         referenceCar: null,
-        lastViewedCar: null
+        lastViewedCar: null,
+        recentSuggestedCars: [],
+        recentSuggestedQuery: null,
+        recentSuggestedScenario: null
       }
     : state;
+  const referencedCar = resolveReferencedCarFromMessage(stateForResolution, message);
+  const stateWithResolvedReference =
+    referencedCar &&
+    (stateForResolution.referenceCar === null ||
+      buildCarReferenceKey(stateForResolution.referenceCar) !==
+        buildCarReferenceKey(referencedCar))
+      ? {
+          ...stateForResolution,
+          referenceCar: referencedCar
+        }
+      : stateForResolution;
   const relativePricePreference = getRelativePricePreference(message);
   const contextualCriteria = inferContextualCriteriaFromState(
     message,
-    stateForResolution
+    stateWithResolvedReference
   );
+  const shouldInheritBrandFromReference = brandReferencePattern.test(message);
+  const shouldInheritLocationFromReference = locationReferencePattern.test(message);
+  const shouldInheritModelFromReference = modelReferencePattern.test(message);
+  const shouldExcludeReferenceFromAlternatives =
+    alternativeOptionPattern.test(message) && referencedCar !== null;
   const resolvedParsingCriteria: Partial<SearchCarsInput> = {
     query: message,
-    brand: parsedIntent.criteria.brand ?? inferredCriteria.brand,
-    model: parsedIntent.criteria.model ?? inferredCriteria.model,
+    brand:
+      parsedIntent.criteria.brand ??
+      inferredCriteria.brand ??
+      (shouldInheritBrandFromReference ? referencedCar?.name : undefined),
+    model:
+      parsedIntent.criteria.model ??
+      inferredCriteria.model ??
+      (shouldInheritModelFromReference ? referencedCar?.model : undefined),
     location: inferredCriteria.location ?? parsedIntent.criteria.location,
     minPrice:
       relativePricePreference === "higher"
@@ -159,16 +214,25 @@ export const resolveSearchRequestFromState = ({
     limit: parsedIntent.criteria.limit,
     excludedItems: uniqueItems([
       ...state.rejectedItems,
-      ...parsedIntent.rejectedItems
+      ...parsedIntent.rejectedItems,
+      ...(shouldExcludeReferenceFromAlternatives && referencedCar
+        ? [referencedCar.model, buildCarReferenceKey(referencedCar)]
+        : [])
     ])
   };
+  if (
+    resolvedParsingCriteria.location === undefined &&
+    shouldInheritLocationFromReference
+  ) {
+    resolvedParsingCriteria.location = referencedCar?.location;
+  }
   const resolution = resolveCriteriaWithState(
     {
       query: message,
       ...overrides
     },
     resolvedParsingCriteria,
-    stateForResolution,
+    stateWithResolvedReference,
     {
       locationResolution
     }

@@ -197,6 +197,8 @@ Classifique:
 	  marque resetMode como model e use o carro do Current State como item rejeitado.
 	- Se o usuario disser "mais caro que esse", "mais barato que esse", "acima desse" ou equivalente,
 	  use o Current State.referenceCar para preencher criteria.minPrice ou criteria.maxPrice.
+	- Use Current State.recentSuggestedCars como fallback estruturado para referencias como
+	  "esse", "o segundo", "aquele outro" e "dessa empresa".
 	- Se Current State.referenceCar for null em uma referencia relativa de preco, nao invente valores.
 	- Use Current State.filterMeta para decidir se uma cidade anterior pode ser herdada.
 	- Se houver troca explicita de cidade ou localizacao ambigua, nao preserve a cidade anterior.
@@ -389,6 +391,7 @@ const strategySelectionStep = createStep({
     const nextCarContext = deriveCarContextAfterSearch({
       previousState: currentState,
       result: inputData.result,
+      query: inputData.message,
       rejectedItems: nextRejectedItems,
       shouldClearAnchors: inputData.shouldClearAnchors
     });
@@ -408,7 +411,10 @@ const strategySelectionStep = createStep({
       filterMeta: inputData.filterMeta,
       rejectedItems: nextRejectedItems,
       lastViewedCar: nextCarContext.lastViewedCar,
-      referenceCar: nextCarContext.referenceCar
+      referenceCar: nextCarContext.referenceCar,
+      recentSuggestedCars: nextCarContext.recentSuggestedCars,
+      recentSuggestedQuery: nextCarContext.recentSuggestedQuery,
+      recentSuggestedScenario: nextCarContext.recentSuggestedScenario
     });
 
     return {
@@ -425,10 +431,11 @@ const persuasiveResponseStep = createStep({
   outputSchema: workflowOutputSchema,
   // Gera a fala final do vendedor respeitando rejeicoes e limites de persuasao.
   execute: async ({ inputData, state }) => {
-    const currentState = sessionStateSchema.parse(state ?? {});
-    const needsReferenceSelection =
-      getRelativePricePreference(inputData.message) !== undefined &&
-      !currentState.referenceCar;
+	    const currentState = sessionStateSchema.parse(state ?? {});
+	    const needsReferenceSelection =
+	      getRelativePricePreference(inputData.message) !== undefined &&
+	      !currentState.referenceCar &&
+	      currentState.recentSuggestedCars.length === 0;
 
     if (needsReferenceSelection) {
       return {
@@ -476,6 +483,9 @@ ${JSON.stringify(inputData.intentState, null, 2)}
 	        rejectedItems: currentState.rejectedItems,
 	        referenceCar: currentState.referenceCar,
 	        lastViewedCar: currentState.lastViewedCar,
+	        recentSuggestedCars: currentState.recentSuggestedCars,
+	        recentSuggestedQuery: currentState.recentSuggestedQuery,
+	        recentSuggestedScenario: currentState.recentSuggestedScenario,
 	        historySummary: currentState.historySummary,
 	        mismatchPersuasionByCar: currentState.mismatchPersuasionByCar,
 	        currentSuggestionPersuasionCount: inputData.result.suggestions[0]
@@ -494,8 +504,8 @@ ${JSON.stringify(inputData.result, null, 2)}
 	Importante:
 	- Se a estrategia for rapport_and_discovery, acolha e faca perguntas curtas.
 	- Nesse modo, nao tente fechar venda e nao pressione com CTA.
-	- Treat historySummary as supporting context only. Current filters, filterMeta, referenceCar,
-	  lastViewedCar and rejectedItems are the source of truth.
+		- Treat historySummary as supporting context only. Current filters, filterMeta, referenceCar,
+		  lastViewedCar, recentSuggestedCars and rejectedItems are the source of truth.
 	- Se o usuario rejeitou a oferta atual ou se currentSuggestionPersuasionCount for maior que zero em um mismatch,
 	  reconheca o "nao" imediatamente e faca pivot para as novas opcoes.
 	- If filterMeta.fallbackPolicy is same_scope_only or the current car is in rejectedItems,

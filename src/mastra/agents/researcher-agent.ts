@@ -19,6 +19,8 @@ Your priorities:
 - Read the Current State before deciding the next refinement.
 - If the user references "this one", "esse", "este", "mais caro", "mais barato", or a follow-up comparison,
   resolve it against Current State.referenceCar and Current State.currentFilters.
+- Use Current State.recentSuggestedCars to resolve references like "the second one",
+  "aquele outro", "esse da cidade X", or "dessa empresa".
 - Use Current State.filterMeta to decide whether the previous city can still be inherited.
 - If the user explicitly changes the city or the location is unresolved, do not preserve the old city.
 - If the user wants to abandon the current line of thought, set resetMode so the workflow can clear stale filters.

@@ -8,6 +8,7 @@ import type {
 } from "@/domain/session-state";
 import { searchIntentStateSchema } from "@/domain/search-intent";
 import type { LocationResolution } from "@/application/services/criteria-parser";
+import { getComparisonAnchorCar } from "@/application/services/search-session-state";
 
 const locationStrictPattern =
   /\b(nao quero|não quero|somente|apenas|so em|s[oó] em|must be|only in|nao aceito outra cidade|não aceito outra cidade|nao vou viajar|não vou viajar|tem que ser)\b/i;
@@ -320,7 +321,8 @@ export const normalizeIntentParsing = ({
   });
   const hasCriteria = hasAnyCriteria(mergedIntent.criteria);
   const missingRelativeReference =
-    getRelativePricePreference(message) !== undefined && !state.referenceCar;
+    getRelativePricePreference(message) !== undefined &&
+    !getComparisonAnchorCar(state);
   const heuristicGreeting =
     greetingPattern.test(message) && !hasCriteria && !hasHistory;
   const missingFields = inferMissingFields(mergedIntent.criteria);
@@ -395,21 +397,22 @@ export const inferContextualCriteriaFromState = (
   state: SessionState
 ): Partial<SearchCarsInput> => {
   const relativePrice = getRelativePricePreference(message);
+  const anchorCar = getComparisonAnchorCar(state);
 
-  if (!state.referenceCar || !relativePrice) {
+  if (!anchorCar || !relativePrice) {
     return {};
   }
 
   if (relativePrice === "higher") {
     return {
-      minPrice: state.referenceCar.price + 1,
+      minPrice: anchorCar.price + 1,
       maxPrice: undefined
     };
   }
 
   return {
     minPrice: undefined,
-    maxPrice: Math.max(state.referenceCar.price - 1, 1)
+    maxPrice: Math.max(anchorCar.price - 1, 1)
   };
 };
 
@@ -465,6 +468,7 @@ export const resolveCriteriaWithState = (
 ): CriteriaResolutionResult => {
   const message = overrides.query ?? parsedCriteria.query ?? "";
   const relativePricePreference = getRelativePricePreference(message);
+  const comparisonAnchor = getComparisonAnchorCar(state);
   const inheritedExcludedItems = uniqueItems([
     ...(state.rejectedItems ?? []),
     ...(parsedCriteria.excludedItems ?? []),
@@ -573,7 +577,7 @@ export const resolveCriteriaWithState = (
             ? "explicit"
             : "inherited";
   const priceOrigin: SessionFilterMeta["priceOrigin"] =
-    relativePricePreference !== undefined && state.referenceCar
+    relativePricePreference !== undefined && comparisonAnchor
       ? "relative"
       : hasExplicitPrice
         ? "explicit"
@@ -589,7 +593,7 @@ export const resolveCriteriaWithState = (
       fallbackPolicy: state.filterMeta.fallbackPolicy
     },
     missingRelativeAnchor:
-      relativePricePreference !== undefined && !state.referenceCar
+      relativePricePreference !== undefined && !comparisonAnchor
   };
 };
 
@@ -612,7 +616,7 @@ export const shouldRunInventorySearch = ({
   const normalizedMessage = normalize(message);
   const hasCriteria = hasAnyCriteria(effectiveCriteria);
   const hasRelativeReference =
-    Boolean(state.referenceCar) &&
+    Boolean(getComparisonAnchorCar(state)) &&
     /\b(esse|este|this one|mais caro|mais barato|more expensive|cheaper)\b/.test(
       normalizedMessage
     );

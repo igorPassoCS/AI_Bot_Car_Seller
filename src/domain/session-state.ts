@@ -24,6 +24,26 @@ export const sessionCarReferenceSchema = z.object({
   location: z.string().min(1)
 });
 
+export const sessionCarMatchTypeSchema = z.enum([
+  "exact_match",
+  "price_mismatch",
+  "location_mismatch",
+  "partial_match"
+]);
+export const sessionSearchScenarioSchema = z.enum([
+  "exact_match",
+  "price_mismatch",
+  "location_mismatch",
+  "partial_match",
+  "no_filtered_match"
+]);
+
+export const sessionSuggestedCarSchema = sessionCarReferenceSchema.extend({
+  matchType: sessionCarMatchTypeSchema,
+  sellingPoints: z.array(z.string().min(1)).default([]),
+  position: z.number().int().min(0)
+});
+
 export const rejectedItemSchema = z.string().min(1);
 
 export const sessionTurnSchema = z.object({
@@ -67,6 +87,9 @@ export const sessionStateSchema = z.object({
   currentFilters: sessionFiltersSchema.default({}),
   referenceCar: sessionCarReferenceSchema.nullable().default(null),
   lastViewedCar: sessionCarReferenceSchema.nullable().default(null),
+  recentSuggestedCars: z.array(sessionSuggestedCarSchema).default([]),
+  recentSuggestedQuery: z.string().nullable().default(null),
+  recentSuggestedScenario: sessionSearchScenarioSchema.nullable().default(null),
   filterMeta: sessionFilterMetaSchema.default({}),
   rejectedItems: z.array(rejectedItemSchema).default([]),
   mismatchPersuasionByCar: z.record(z.number().int().min(0)).default({}),
@@ -77,6 +100,7 @@ export const sessionStateSchema = z.object({
 
 export type SessionState = z.infer<typeof sessionStateSchema>;
 export type SessionCarReference = z.infer<typeof sessionCarReferenceSchema>;
+export type SessionSuggestedCar = z.infer<typeof sessionSuggestedCarSchema>;
 export type SessionFilterMeta = z.infer<typeof sessionFilterMetaSchema>;
 
 // Cria um estado inicial consistente para novas conversas.

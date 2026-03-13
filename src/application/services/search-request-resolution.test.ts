@@ -29,6 +29,29 @@ const makeParsedIntent = (overrides: Record<string, unknown> = {}) => {
   });
 };
 
+const recentSuggestedCars = [
+  {
+    name: "Fiat",
+    model: "Pulse",
+    image: "/images/cars/fiat_pulse.jpg",
+    price: 96000,
+    location: "Sao Paulo",
+    matchType: "exact_match" as const,
+    sellingPoints: ["Modelo alinhado com os filtros solicitados."],
+    position: 0
+  },
+  {
+    name: "Honda",
+    model: "Civic",
+    image: "/images/cars/honda_civic.jpg",
+    price: 105000,
+    location: "Rio de Janeiro",
+    matchType: "partial_match" as const,
+    sellingPoints: ["Opcao alternativa para manter a busca ativa."],
+    position: 1
+  }
+];
+
 // Verifica que uma troca explicita de cidade nao herda o filtro anterior.
 test("explicit city alias clears stale city inheritance and enables strict location", () => {
   const state = {
@@ -147,6 +170,80 @@ test("relative price without reference car does not invent a number", () => {
   assert.equal(resolution.effectiveCriteria.minPrice, undefined);
   assert.equal(resolution.effectiveCriteria.maxPrice, undefined);
   assert.equal(resolution.missingRelativeAnchor, true);
+});
+
+// Garante que o ultimo conjunto mostrado pode servir de ancora quando nao ha referenceCar.
+test("recentSuggestedCars[0] is used as fallback anchor for cheaper-than queries", () => {
+  const state = {
+    ...createInitialSessionState(),
+    recentSuggestedCars
+  };
+
+  const resolution = resolveSearchRequestFromState({
+    cars,
+    message: "mais barato que esse",
+    overrides: {},
+    parsedIntent: makeParsedIntent(),
+    state
+  });
+
+  assert.equal(resolution.effectiveCriteria.maxPrice, 95999);
+  assert.equal(resolution.missingRelativeAnchor, false);
+});
+
+// Garante que referencias posicionais usam a ordem do ultimo conjunto exibido.
+test("the second option is used as the comparison anchor when referenced explicitly", () => {
+  const state = {
+    ...createInitialSessionState(),
+    recentSuggestedCars
+  };
+
+  const resolution = resolveSearchRequestFromState({
+    cars,
+    message: "quero algo mais barato que o segundo",
+    overrides: {},
+    parsedIntent: makeParsedIntent(),
+    state
+  });
+
+  assert.equal(resolution.effectiveCriteria.maxPrice, 104999);
+  assert.equal(resolution.missingRelativeAnchor, false);
+});
+
+// Garante que pedidos referenciais herdam a marca do ultimo conjunto quando necessario.
+test("brand is inherited from the last shown set for dessa empresa", () => {
+  const state = {
+    ...createInitialSessionState(),
+    recentSuggestedCars
+  };
+
+  const resolution = resolveSearchRequestFromState({
+    cars,
+    message: "tem mais algum dessa empresa",
+    overrides: {},
+    parsedIntent: makeParsedIntent(),
+    state
+  });
+
+  assert.equal(resolution.effectiveCriteria.brand, "Fiat");
+});
+
+// Garante que pedidos referenciais herdam a cidade do ultimo conjunto quando necessario.
+test("location is inherited from the last shown set for dessa cidade", () => {
+  const state = {
+    ...createInitialSessionState(),
+    recentSuggestedCars
+  };
+
+  const resolution = resolveSearchRequestFromState({
+    cars,
+    message: "tem mais algum dessa cidade",
+    overrides: {},
+    parsedIntent: makeParsedIntent(),
+    state
+  });
+
+  assert.equal(resolution.effectiveCriteria.location, "Sao Paulo");
 });
 
 // Verifica que a segunda tentativa respeita o escopo estrito apos rejeicao.

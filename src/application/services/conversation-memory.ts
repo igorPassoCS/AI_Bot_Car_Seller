@@ -127,6 +127,13 @@ const buildHistorySummary = (state: SessionState): string => {
     );
   }
 
+  if (state.recentSuggestedCars.length > 0) {
+    const recentCars = state.recentSuggestedCars
+      .map((car) => `${car.position + 1}. ${car.name} ${car.model} em ${car.location}`)
+      .join(" ");
+    lines.push(`Ultimo conjunto sugerido: ${recentCars}`);
+  }
+
   if (state.factMemory.principalFacts.length > 0) {
     lines.push(`Fatos principais: ${state.factMemory.principalFacts.join(" ")}`);
   }
@@ -188,6 +195,7 @@ export const updateSessionStateMemory = ({
   const carContext = deriveCarContextAfterSearch({
     previousState,
     result,
+    query: filters.query,
     rejectedItems: previousState.rejectedItems,
     shouldClearAnchors: false
   });
@@ -200,6 +208,9 @@ export const updateSessionStateMemory = ({
     },
     lastViewedCar: carContext.lastViewedCar,
     referenceCar: carContext.referenceCar,
+    recentSuggestedCars: carContext.recentSuggestedCars,
+    recentSuggestedQuery: carContext.recentSuggestedQuery,
+    recentSuggestedScenario: carContext.recentSuggestedScenario,
     mismatchPersuasionByCar,
     recentTurns: [
       ...previousState.recentTurns,
