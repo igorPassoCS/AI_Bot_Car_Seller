@@ -12,6 +12,7 @@ import {
   normalizeIntentParsing,
   resolveCriteriaWithState
 } from "@/application/services/search-intent-evolution";
+import { parseCriteriaFromMessage } from "@/application/services/criteria-parser";
 import { searchIntentStateSchema } from "@/domain/search-intent";
 import { buildFallbackReply } from "@/application/services/sales-reply";
 
@@ -199,9 +200,17 @@ const dataRetrievalStep = createStep({
   outputSchema: dataRetrievalOutputSchema,
   execute: async ({ inputData, state }) => {
     const currentState = searchIntentStateSchema.parse(state ?? {});
+    const repository = new JsonCarRepository(env.CARS_DATA_PATH);
+    const allCars = await repository.getAllCars();
+    const inferredCriteria = parseCriteriaFromMessage(allCars, inputData.message);
+    const normalizedParsedCriteria = {
+      ...inferredCriteria,
+      ...inputData.parsedIntent.criteria
+    };
+
     const effectiveCriteria = resolveCriteriaWithState(
       inputData.overrides ?? {},
-      inputData.parsedIntent.criteria,
+      normalizedParsedCriteria,
       currentState
     );
     const hasEffectiveCriteria = Boolean(
@@ -233,7 +242,6 @@ const dataRetrievalStep = createStep({
       };
     }
 
-    const repository = new JsonCarRepository(env.CARS_DATA_PATH);
     const useCase = new SearchCarsUseCase(repository);
     const result = await useCase.execute({
       query: inputData.message,

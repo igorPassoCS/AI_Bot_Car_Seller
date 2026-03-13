@@ -2,70 +2,90 @@
   {
     "Name": "BYD",
     "Model": "Dolphin",
-    "Image": "https://source.unsplash.com/1600x900/?byd,dolphin,electric-car",
+    "Image": "/images/cars/BYD_Dolphin_White_DCW22005.webp",
+    "image2": "/images/cars/BYD_interior_1.webp",
+    "image3": "/images/cars/BYD_Dolphin_interior_2.webp",
     "Price": 99990,
     "Location": "Sao Paulo"
   },
   {
     "Name": "Toyota",
     "Model": "Corolla",
-    "Image": "https://source.unsplash.com/1600x900/?toyota,corolla,sedan",
+    "Image": "/images/cars/corolla1.jpg",
+    "image2": "/images/cars/corolla2.jpg",
+    "image3": "/images/cars/corolla3.jpg",
     "Price": 112000,
     "Location": "Sao Paulo"
   },
   {
     "Name": "Volkswagen",
     "Model": "T-Cross",
-    "Image": "https://source.unsplash.com/1600x900/?volkswagen,suv",
+    "Image": "/images/cars/tcross.jpg",
+    "image2": "",
+    "image3": "",
     "Price": 118500,
     "Location": "Campinas"
   },
   {
     "Name": "Honda",
     "Model": "Civic",
-    "Image": "https://source.unsplash.com/1600x900/?honda,civic,car",
+    "Image": "/images/cars/hondaCivic.jpg",
+    "image2": "",
+    "image3": "",
     "Price": 105000,
     "Location": "Rio de Janeiro"
   },
   {
     "Name": "Chevrolet",
     "Model": "Onix",
-    "Image": "https://source.unsplash.com/1600x900/?chevrolet,hatchback",
+    "Image": "/images/cars/chevrolet_onix.webp",
+    "image2": "",
+    "image3": "",
     "Price": 85000,
     "Location": "Belo Horizonte"
   },
   {
     "Name": "Hyundai",
     "Model": "HB20",
-    "Image": "https://source.unsplash.com/1600x900/?hyundai,hb20,car",
+    "Image": "/images/cars/hyundai-hb20.jpg",
+    "image2": "",
+    "image3": "",
     "Price": 79000,
     "Location": "Sao Paulo"
   },
   {
     "Name": "Renault",
     "Model": "Kwid",
-    "Image": "https://source.unsplash.com/1600x900/?renault,kwid,car",
+    "Image": "/images/cars/renault_kwid.jpg",
+    "image2": "",
+    "image3": "",
     "Price": 68990,
     "Location": "Curitiba"
   },
   {
     "Name": "Fiat",
     "Model": "Pulse",
-    "Image": "https://source.unsplash.com/1600x900/?fiat,suv,car",
+    "Image": "/images/cars/fiat_pulse.jpg",
+    "image2": "",
+    "image3": "",
     "Price": 96000,
     "Location": "Sao Paulo"
   },
   {
     "Name": "Jeep",
     "Model": "Renegade",
-    "Image": "https://source.unsplash.com/1600x900/?jeep,renegade,suv",
+    "Image": "/images/cars/jeep_renegade .jpg",
+    "image2": "",
+    "image3": "",
     "Price": 122000,
     "Location": "Porto Alegre"
   },
   {
     "Name": "Peugeot",
     "Model": "208",
-    "Image": "https://source.unsplash.com/1600x900/?peugeot,208,car",
+    "Image": "/images/cars/istockphoto-1289464672-1024x1024.jpg",
+    "image2": "",
+    "image3": "",
     "Price": 87500,
     "Location": "Sao Paulo"
   }

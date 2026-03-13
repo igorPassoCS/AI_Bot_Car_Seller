@@ -1,9 +1,27 @@
 import { z } from "zod";
 
+const imageSourceSchema = z.string().trim().refine(
+  (value) => {
+    if (value.startsWith("/")) {
+      return true;
+    }
+
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  },
+  {
+    message: "Image must be an absolute URL or a local path starting with /."
+  }
+);
+
 export const carSchema = z.object({
   Name: z.string().min(1),
   Model: z.string().min(1),
-  Image: z.string().url(),
+  Image: imageSourceSchema,
   Price: z.number().positive(),
   Location: z.string().min(1)
 });

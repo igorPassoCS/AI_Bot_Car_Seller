@@ -37,6 +37,29 @@ npm run dev
 - `src/infrastructure`: acesso ao `cars.json`.
 - `src/mastra`: agente e tools do Mastra.
 - `src/app`: frontend e API route.
+- `public`: arquivos estaticos servidos diretamente pelo Next.js.
+
+## Imagens dos carros
+
+Para imagens locais dos carros, use a pasta `public/images/cars`.
+
+Exemplo:
+
+```text
+public/images/cars/byd-dolphin.jpg
+```
+
+No `data/cars.json`, referencie com caminho absoluto a partir de `public`:
+
+```json
+{
+  "Name": "BYD",
+  "Model": "Dolphin",
+  "Image": "/images/cars/byd-dolphin.jpg",
+  "Price": 99990,
+  "Location": "Sao Paulo"
+}
+```
 
 ## Comportamentos de busca
 

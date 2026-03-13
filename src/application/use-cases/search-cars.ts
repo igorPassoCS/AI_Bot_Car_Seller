@@ -83,6 +83,8 @@ export class SearchCarsUseCase {
     const location = input.location ?? inferred.location;
     const maxPrice = input.maxPrice ?? inferred.maxPrice;
     const limit = input.limit ?? 3;
+    const hasActiveCriteria = Boolean(brand || model || location || maxPrice);
+    const isPriceOnlySearch = Boolean(maxPrice && !brand && !model && !location);
 
     const baseFiltered = allCars.filter(
       (car) =>
@@ -101,7 +103,8 @@ export class SearchCarsUseCase {
       maxPrice ? car.price <= maxPrice : true
     );
 
-    if (exact.length > 0) {
+    // Evita falso positivo de "match exato" quando o usuario ainda nao definiu filtros reais.
+    if (hasActiveCriteria && exact.length > 0) {
       return {
         scenario: "exact_match",
         interpretedCriteria: { brand, model, location, maxPrice },
@@ -118,11 +121,13 @@ export class SearchCarsUseCase {
     if (relaxedFiltered.length > 0 && maxPrice) {
       const aboveBudget = relaxedFiltered.filter((car) => car.price > maxPrice);
       if (aboveBudget.length > 0) {
+        // Para consultas apenas por teto de preco, mostra a melhor aproximacao para evitar ruido visual.
+        const priceMismatchLimit = isPriceOnlySearch ? 1 : limit;
         return {
           scenario: "price_mismatch",
           interpretedCriteria: { brand, model, location, maxPrice },
           suggestions: orderByPriceDistance(aboveBudget, maxPrice)
-            .slice(0, limit)
+            .slice(0, priceMismatchLimit)
             .map((car) => ({
               car,
               matchType: "price_mismatch",
