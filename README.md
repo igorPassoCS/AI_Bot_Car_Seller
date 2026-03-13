@@ -1,43 +1,89 @@
 # Car Search With Mastra
 
-Aplicacao full-stack em TypeScript com Next.js + Mastra para busca de carros com chat de consultoria.
+Aplicação full-stack em TypeScript com Next.js + Mastra para busca de carros com chat de consultoria.
 
-## Requisitos
+## Sumário
 
-- Node.js 20+
-- Chave da OpenAI em `OPENAI_API_KEY`
-- Modelo configuravel em `OPENAI_MODEL` (padrao: `openai/gpt-4o-mini`)
+- [Requisitos](#requisitos)
+- [Tecnologias utilizadas](#tecnologias-utilizadas)
+- [Decisões técnicas principais e experiência do usuário](#decisões-técnicas-principais-e-experiência-do-usuário)
+- [Plano de Negócios](#-plano-de-negócios)
 
-## Como rodar
+# Requisitos
 
-1. Instale dependencias:
+- Node.js 20+ instalado na máquina
+- `npm` disponível no terminal
+- Chave da OpenAI para habilitar o chat com IA em `OPENAI_API_KEY`
+- Modelo configurável em `OPENAI_MODEL` (padrão: `openai/gpt-4o-mini`)
+
+## Como rodar localmente
+
+1. Entre na pasta do projeto:
+
+```bash
+cd /caminho/do/projeto
+```
+
+2. Instale as dependências:
 
 ```bash
 npm install
 ```
 
-2. Configure variaveis:
+3. Crie o arquivo de variáveis de ambiente com base no exemplo:
 
 ```bash
 cp .env.example .env.local
 ```
 
-3. Rode em desenvolvimento:
+4. Edite o arquivo `.env.local` e preencha pelo menos estas variáveis:
+
+```env
+OPENAI_API_KEY=sua_chave_real_da_openai
+OPENAI_MODEL=openai/gpt-4o-mini
+CARS_DATA_PATH=data/cars.json
+```
+
+Observações:
+
+- `OPENAI_API_KEY` é necessária para o chat funcionar corretamente.
+- `OPENAI_MODEL` pode ser mantido como está, caso você queira usar o modelo padrão do projeto.
+- `CARS_DATA_PATH` aponta para a base local de carros e normalmente não precisa ser alterada.
+
+5. Rode em desenvolvimento:
 
 ```bash
 npm run dev
 ```
 
-4. Acesse `http://localhost:3000`.
+6. Abra no navegador a URL exibida no terminal.
+
+Na maioria dos casos será `http://localhost:3000`, mas se essa porta já estiver em uso o Next.js subirá em outra porta, como `3001` ou `3002`.
+
+## Rodando em produção local
+
+Se quiser validar a build de produção localmente:
+
+1. Gere a build:
+
+```bash
+npm run build
+```
+
+2. Inicie o servidor:
+
+```bash
+npm run start
+```
 
 ## Arquitetura
 
-- `src/domain`: tipos de dominio.
-- `src/application`: regras de negocio e orquestracao de chat.
+- `src/domain`: tipos de domínio.
+- `src/application`: regras de negócio e orquestração de chat.
 - `src/infrastructure`: acesso ao `cars.json`.
 - `src/mastra`: agente e tools do Mastra.
 - `src/app`: frontend e API route.
-- `public`: arquivos estaticos servidos diretamente pelo Next.js.
+- `public`: arquivos estáticos servidos diretamente pelo Next.js.
 
 ## Imagens dos carros
 
@@ -64,8 +110,48 @@ No `data/cars.json`, referencie com caminho absoluto a partir de `public`:
 ## Comportamentos de busca
 
 - Match exato: retorna carros aderentes aos filtros.
-- Mismatch de preco: sugere opcoes proximas e argumenta valor.
-- Mismatch de localizacao: recomenda mesmo assim, destacando entrega/reserva.
+- Mismatch de preço: sugere opções próximas e argumenta valor.
+- Mismatch de localização: recomenda mesmo assim, destacando entrega/reserva.
+
+# Tecnologias utilizadas
+
+- Linguagem principal: TypeScript
+- Frontend e backend web: Next.js 15 com App Router
+- UI: React 19
+- Estilização: Tailwind CSS 4
+- Orquestração de agentes: Mastra (`@mastra/core`)
+- Validação de dados: Zod
+- Renderização de markdown no chat: `react-markdown`
+- Animações de interface: Framer Motion
+- Deploy: Vercel
+
+# Decisões técnicas principais e experiência do usuário
+
+O projeto foi pensado para funcionar como um consultor de vendas conversacional, e não apenas como um filtro estático de carros. Por isso, a decisão principal foi estruturar a experiência com uma lógica multiagente de IA, onde cada agente possui uma responsabilidade bem definida dentro da jornada de atendimento.
+
+### Estratégia multiagente
+
+- [Researcher](./src/mastra/agents/researcher-agent.ts): interpreta a mensagem do usuário, identifica intenções como busca, refinamento, comparação, rejeição e mudança de contexto, e organiza os critérios que devem ser usados na busca.
+- [Tool `searchCars`](./src/mastra/tools/search-cars-tool.ts): executa a busca no estoque local com base nos filtros consolidados, aplicando critérios como preço, localização, marca, modelo e exclusões.
+- [Closer](./src/mastra/agents/closer-agent.ts): transforma o resultado técnico da busca em uma resposta comercial mais natural, explicando opções, contornando objeções quando faz sentido e respeitando o contexto da conversa.
+- [Orquestrador](./src/application/services/chat-orchestrator.ts): conecta memória de conversa, workflow e fallback determinístico, garantindo que o sistema mantenha contexto entre turnos e continue funcional mesmo se alguma etapa agêntica falhar. O workflow principal que integra essas etapas está em [car-sales-workflow.ts](./src/mastra/workflows/car-sales-workflow.ts).
+
+Essa divisão ajuda a manter o comportamento mais previsível, facilita manutenção e torna mais simples evoluir cada parte do fluxo sem misturar interpretação, busca e persuasão no mesmo bloco de lógica.
+
+### Estratégias implementadas na experiência
+
+- Interface inspirada em produtos conversacionais modernos: a tela foi desenhada para lembrar a fluidez de uso do Gemini, mas com identidade visual adaptada ao contexto da Klubi.
+- Visual com identidade da marca: elementos como lguardaogo, cores de destaque e acabamento do layout foram ajustados para deixar a experiência mais coerente com uma apresentação de produto.
+- Ações rápidas por botões: foram adicionados botões com frases prontas para reduzir atrito no primeiro uso e facilitar a validação de cenários principais sem depender de digitação manual.
+- Conversa com memória de curto prazo: o sistema  filtros atuais, último carro relevante e itens rejeitados para permitir refinamentos naturais como "mais barato", "no Rio" ou "não quero esse".
+- Persuasão com limite: o agente comercial pode defender uma opção uma vez (mesmo que você peça para ele carros mais baratos, ele vai tentar de primeira ser persuasivo, depois pode ser mais flexível e trazer outras opções de veículos) , mas depois precisa pivotar para novas alternativas, para que a experiência pareça consultiva em vez de insistente.
+- Fallback controlado: mesmo quando uma chamada agêntica falha, a aplicação tenta manter uma resposta útil, evitando que o usuário fique sem retorno.
+
+### Como a experiência do usuário foi pensada
+
+O foco principal foi reduzir fricção e fazer a busca parecer uma conversa assistida. Em vez de exigir que o usuário monte filtros formais, a interface aceita linguagem natural e tenta acompanhar a intenção dele ao longo da conversa. Isso melhora a sensação de continuidade e deixa o fluxo mais próximo de um atendimento real.
+
+Ao mesmo tempo, a interface foi desenhada para ajudar tanto um usuário final quanto um avaliador do projeto. Os botões com frases prontas aceleram testes, os cards deixam as sugestões visuais e a organização do chat ajuda a entender rapidamente o que o sistema interpretou e o que foi oferecido como alternativa.
 
 # 💼 Plano de Negócios 
 
@@ -81,7 +167,7 @@ Pensei também no modelo de marketplace que possui vários lojistas diferentes, 
 
 Minha estratégia inicial de aquisição seria baseada em **networking e indicações**. Eu focaria em contatos de pessoas conhecidas, como amigos de amigos que possuam revendas de veículos, pois sei que a confiança é um fator muito importante no começo dos projetos. Pediria uma introdução direta para facilitar a abordagem, seja com o dono ou com o responsável pela empresa.
 
-Acredito que, como o normalmente os atuantes em nichos de mercado são bem conectados com seus pares, posso aproveitar o **efeito de rede**. Após entregar um trabalho de qualidade para o primeiro cliente (em um momento que o cliente ja tem valor percebido), eu ofereceria uma comissão por indicação (modelo de afiliados) para que ele me conectasse a outros lojistas ou grupos de revendedores. Isso transformaria a satisfação do cliente em um canal de vendas.
+Acredito que, como o normalmente os atuantes em nichos de mercado são bem conectados com seus pares, posso aproveitar o **efeito de rede**. Após entregar um trabalho de qualidade para o primeiro cliente (em um momento que o cliente já tem valor percebido), eu ofereceria uma comissão por indicação (modelo de afiliados) para que ele me conectasse a outros lojistas ou grupos de revendedores. Isso transformaria a satisfação do cliente em um canal de vendas.
 
 Para o primeiro cliente especificamente, eu ofereceria a plataforma por um **valor simbólico**. É importante cobrar algo, mesmo que pouco, para garantir o comprometimento dele com a ferramenta e dar valor à solução. Em troca, estabeleceria um canal aberto para feedbacks constantes, permitindo que eu valide as funcionalidades e corrija bugs em um cenário real.
 
