@@ -1,3 +1,4 @@
+// Este arquivo coordena o workflow principal e o fallback deterministicos da API.
 import type { SearchCarsInput, SearchCarsResult } from "@/domain/car";
 import { env } from "@/config/env";
 import { mastra } from "@/mastra";
@@ -7,18 +8,16 @@ import { JsonCarRepository } from "@/infrastructure/repositories/json-car-reposi
 import { SearchCarsUseCase } from "@/application/use-cases/search-cars";
 import type { SearchIntentState } from "@/domain/search-intent";
 import {
-  inferContextualCriteriaFromState,
   intentParsingSchema,
   normalizeIntentParsing,
-  resolveCriteriaWithState
 } from "@/application/services/search-intent-evolution";
-import { parseCriteriaFromMessage } from "@/application/services/criteria-parser";
 import {
   getSessionState,
   saveSessionState
 } from "@/application/services/session-state-store";
 import { updateSessionStateMemory } from "@/application/services/conversation-memory";
 import { buildFallbackReply } from "@/application/services/sales-reply";
+import { resolveSearchRequestFromState } from "@/application/services/search-request-resolution";
 
 const greetingPattern =
   /^\s*(oi|ola|olá|opa|aoba|e ai|e aí|bom dia|boa tarde|boa noite|hello|hi|hey)\W*$/i;
@@ -42,10 +41,12 @@ export type ChatResponse = {
   intentState: SearchIntentState;
 };
 
+// Resposta curta usada quando so existe saudacao e ainda faltam criterios.
 const buildDiscoveryFallbackReply = (): string => {
   return "Oi! Que bom falar com voce. Para eu te recomendar com precisao, me diga marca/modelo, faixa de preco e cidade de preferencia.";
 };
 
+// Detecta quando a mensagem e apenas uma saudacao sem pedido de busca.
 const isGreetingOnly = (
   message: string,
   overrides: Partial<SearchCarsInput>
@@ -60,15 +61,14 @@ const isGreetingOnly = (
   return greetingPattern.test(message) && !hasExplicitCriteria;
 };
 
+// Resolve criterios finais sem depender do sucesso do workflow principal.
 const buildEffectiveCriteriaFromSession = async (
   message: string,
   overrides: Partial<SearchCarsInput>,
   sessionState: SessionState
-): Promise<Partial<SearchCarsInput>> => {
+): Promise<ReturnType<typeof resolveSearchRequestFromState>> => {
   const repository = new JsonCarRepository(env.CARS_DATA_PATH);
   const allCars = await repository.getAllCars();
-  const inferredCriteria = parseCriteriaFromMessage(allCars, message);
-  const contextualCriteria = inferContextualCriteriaFromState(message, sessionState);
   const parsedIntent = normalizeIntentParsing({
     message,
     hasHistory: sessionState.intentState.turns > 0,
@@ -76,8 +76,6 @@ const buildEffectiveCriteriaFromSession = async (
     parsedIntent: intentParsingSchema.parse({
       normalizedMessage: message,
       criteria: {
-        ...inferredCriteria,
-        ...contextualCriteria,
         ...overrides
       },
       behaviorSignals: {
@@ -87,43 +85,58 @@ const buildEffectiveCriteriaFromSession = async (
     })
   });
 
-  return resolveCriteriaWithState(
-    {
-      query: message,
-      excludedItems: parsedIntent.rejectedItems,
-      ...overrides
-    },
-    {
-      query: message,
-      ...inferredCriteria,
-      ...contextualCriteria,
-      excludedItems: [
-        ...sessionState.rejectedItems,
-        ...parsedIntent.rejectedItems
-      ]
-    },
-    sessionState
-  );
+  return resolveSearchRequestFromState({
+    cars: allCars,
+    message,
+    overrides,
+    parsedIntent,
+    state: sessionState
+  });
 };
 
+// Executa uma busca local consistente para os cenarios de fallback operacional.
 const executeDeterministicSearch = async (
   message: string,
   overrides: Partial<SearchCarsInput>,
   sessionState: SessionState
-): Promise<SearchCarsResult> => {
-  const effectiveCriteria = await buildEffectiveCriteriaFromSession(
+): Promise<{
+  resolution: ReturnType<typeof resolveSearchRequestFromState>;
+  result: SearchCarsResult;
+}> => {
+  const resolution = await buildEffectiveCriteriaFromSession(
     message,
     overrides,
     sessionState
   );
+  if (resolution.missingRelativeAnchor) {
+    return {
+      resolution,
+      result: {
+        scenario: "no_filtered_match",
+        interpretedCriteria: {
+          brand: resolution.effectiveCriteria.brand,
+          model: resolution.effectiveCriteria.model,
+          minPrice: resolution.effectiveCriteria.minPrice,
+          maxPrice: resolution.effectiveCriteria.maxPrice,
+          location: resolution.effectiveCriteria.location
+        },
+        suggestions: []
+      }
+    };
+  }
   const repository = new JsonCarRepository(env.CARS_DATA_PATH);
   const useCase = new SearchCarsUseCase(repository);
-  return useCase.execute({
+  const result = await useCase.execute({
     query: message,
-    ...effectiveCriteria
+    ...resolution.effectiveCriteria
   });
+  return {
+    resolution,
+    result
+  };
 };
 
+// Orquestra a conversa completa entre workflow, memoria e fallback deterministico.
 export const runSalesConsultant = async (
   message: string,
   overrides: Partial<SearchCarsInput> = {},
@@ -183,27 +196,36 @@ export const runSalesConsultant = async (
       };
     }
 
-    const fallbackResult = await executeDeterministicSearch(
+    const fallbackExecution = await executeDeterministicSearch(
       message,
       overrides,
       fallbackState
     );
-    const fallbackReply = buildFallbackReply(fallbackResult);
+    const fallbackReply = buildFallbackReply(fallbackExecution.result);
     const nextSessionState = updateSessionStateMemory({
-      previousState: fallbackState,
+      previousState: sessionStateSchema.parse({
+        ...fallbackState,
+        currentFilters: {
+          query: fallbackExecution.resolution.effectiveCriteria.query,
+          brand: fallbackExecution.resolution.effectiveCriteria.brand,
+          model: fallbackExecution.resolution.effectiveCriteria.model,
+          location: fallbackExecution.resolution.effectiveCriteria.location,
+          minPrice: fallbackExecution.resolution.effectiveCriteria.minPrice,
+          maxPrice: fallbackExecution.resolution.effectiveCriteria.maxPrice,
+          limit: fallbackExecution.resolution.effectiveCriteria.limit
+        },
+        filterMeta: fallbackExecution.resolution.filterMeta
+      }),
       userMessage: message,
       assistantReply: fallbackReply,
-      filters: {
-        query: message,
-        ...fallbackResult.interpretedCriteria
-      },
-      result: fallbackResult
+      filters: fallbackExecution.resolution.effectiveCriteria,
+      result: fallbackExecution.result
     });
     saveSessionState(sessionId, nextSessionState);
 
     return {
       reply: fallbackReply,
-      result: fallbackResult,
+      result: fallbackExecution.result,
       intentState: nextSessionState.intentState
     };
   } catch {
@@ -222,27 +244,36 @@ export const runSalesConsultant = async (
       };
     }
 
-    const fallbackResult = await executeDeterministicSearch(
+    const fallbackExecution = await executeDeterministicSearch(
       message,
       overrides,
       fallbackState
     );
-    const fallbackReply = buildFallbackReply(fallbackResult);
+    const fallbackReply = buildFallbackReply(fallbackExecution.result);
     const nextSessionState = updateSessionStateMemory({
-      previousState: fallbackState,
+      previousState: sessionStateSchema.parse({
+        ...fallbackState,
+        currentFilters: {
+          query: fallbackExecution.resolution.effectiveCriteria.query,
+          brand: fallbackExecution.resolution.effectiveCriteria.brand,
+          model: fallbackExecution.resolution.effectiveCriteria.model,
+          location: fallbackExecution.resolution.effectiveCriteria.location,
+          minPrice: fallbackExecution.resolution.effectiveCriteria.minPrice,
+          maxPrice: fallbackExecution.resolution.effectiveCriteria.maxPrice,
+          limit: fallbackExecution.resolution.effectiveCriteria.limit
+        },
+        filterMeta: fallbackExecution.resolution.filterMeta
+      }),
       userMessage: message,
       assistantReply: fallbackReply,
-      filters: {
-        query: message,
-        ...fallbackResult.interpretedCriteria
-      },
-      result: fallbackResult
+      filters: fallbackExecution.resolution.effectiveCriteria,
+      result: fallbackExecution.result
     });
     saveSessionState(sessionId, nextSessionState);
 
     return {
       reply: fallbackReply,
-      result: fallbackResult,
+      result: fallbackExecution.result,
       intentState: nextSessionState.intentState
     };
   }

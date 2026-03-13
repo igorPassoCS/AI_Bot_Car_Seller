@@ -1,6 +1,8 @@
+// Este arquivo define os contratos centrais de carros, sugestoes e filtros de busca.
 import { z } from "zod";
 
 export const imageSourceSchema = z.string().trim().refine(
+  // Valida se a imagem e um caminho local ou uma URL absoluta permitida.
   (value) => {
     if (value.startsWith("/")) {
       return true;
@@ -57,6 +59,8 @@ export type SearchCarsInput = {
   location?: string;
   limit?: number;
   excludedItems?: string[];
+  strictLocation?: boolean;
+  fallbackPolicy?: "allow_mismatch_once" | "same_scope_only";
 };
 
 export type SearchCarsResult = {

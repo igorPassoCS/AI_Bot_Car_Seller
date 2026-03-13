@@ -1,8 +1,13 @@
+// Este arquivo concentra as regras que evoluem a intencao de busca a cada turno.
 import { z } from "zod";
 import type { SearchCarsInput, SearchCarsResult } from "@/domain/car";
 import type { SearchIntentState } from "@/domain/search-intent";
-import type { SessionState } from "@/domain/session-state";
+import type {
+  SessionFilterMeta,
+  SessionState
+} from "@/domain/session-state";
 import { searchIntentStateSchema } from "@/domain/search-intent";
+import type { LocationResolution } from "@/application/services/criteria-parser";
 
 const locationStrictPattern =
   /\b(nao quero|não quero|somente|apenas|so em|s[oó] em|must be|only in|nao aceito outra cidade|não aceito outra cidade|nao vou viajar|não vou viajar|tem que ser)\b/i;
@@ -21,6 +26,7 @@ const currentOfferRejectionPattern =
 const resetSearchPattern =
   /\b(esquece isso|quero outra coisa|quero algo diferente|outra coisa|muda isso|muda tudo|troca tudo|vamos do zero)\b/i;
 
+// Normaliza texto para comparacoes deterministicas entre mensagens e estado.
 const normalize = (value: string): string =>
   value
     .normalize("NFD")
@@ -28,6 +34,7 @@ const normalize = (value: string): string =>
     .toLowerCase()
     .trim();
 
+// Remove duplicatas sem depender de caixa ou acentuacao.
 const uniqueItems = (items: string[]): string[] => {
   return items.filter(
     (item, index) =>
@@ -36,6 +43,7 @@ const uniqueItems = (items: string[]): string[] => {
   );
 };
 
+// Gera uma chave humana e estavel para identificar um carro ao longo da conversa.
 const buildCarReferenceKey = ({
   name,
   model
@@ -46,6 +54,7 @@ const buildCarReferenceKey = ({
   return `${name} ${model}`.trim();
 };
 
+// Compara um valor qualquer com um item rejeitado usando a mesma normalizacao.
 const matchesRejectedItem = (
   candidate: string,
   rejectedItem: string
@@ -53,6 +62,7 @@ const matchesRejectedItem = (
   return normalize(candidate) === normalize(rejectedItem);
 };
 
+// Verifica se o carro atual do contexto foi rejeitado pelo usuario.
 const lastViewedCarMatchesRejectedItems = (
   state: SessionState,
   rejectedItems: string[]
@@ -72,7 +82,8 @@ const lastViewedCarMatchesRejectedItems = (
   );
 };
 
-const detectRelativePricePreference = (
+// Detecta se a mensagem pede uma comparacao relativa de preco.
+export const getRelativePricePreference = (
   message: string
 ): "higher" | "lower" | undefined => {
   if (/mais caro|more expensive|acima desse|acima deste|superior a esse/i.test(message)) {
@@ -127,7 +138,13 @@ export const intentParsingSchema = z.object({
 });
 
 export type IntentParsingOutput = z.infer<typeof intentParsingSchema>;
+export type CriteriaResolutionResult = {
+  criteria: Partial<SearchCarsInput>;
+  filterMeta: SessionFilterMeta;
+  missingRelativeAnchor: boolean;
+};
 
+// Informa se ja existe criterio suficiente para tratar a mensagem como busca.
 const hasAnyCriteria = (criteria: Partial<SearchCarsInput>): boolean => {
   return Boolean(
     criteria.brand ||
@@ -138,6 +155,7 @@ const hasAnyCriteria = (criteria: Partial<SearchCarsInput>): boolean => {
   );
 };
 
+// Lista os campos que ainda faltam para uma recomendacao mais segura.
 const inferMissingFields = (
   criteria: Partial<SearchCarsInput>
 ): MissingField[] => {
@@ -159,6 +177,7 @@ const inferMissingFields = (
   return missing;
 };
 
+// Deduz itens rejeitados quando o usuario rejeita a oferta atual ou um modelo citado.
 const inferRejectedItemsFromState = ({
   message,
   state,
@@ -192,6 +211,7 @@ const inferRejectedItemsFromState = ({
   return uniqueItems(rejectedItems);
 };
 
+// Decide quando a regra de uma unica tentativa de persuasao exige pivot imediato.
 const shouldPivotAfterRepeatedMismatch = ({
   message,
   parsedIntent,
@@ -228,6 +248,7 @@ const shouldPivotAfterRepeatedMismatch = ({
   return false;
 };
 
+// Consolida rejeicoes e resets para o restante do fluxo trabalhar com sinais limpos.
 const inferNegativeIntentSignals = ({
   message,
   parsedIntent,
@@ -275,6 +296,7 @@ const inferNegativeIntentSignals = ({
   };
 };
 
+// Completa a interpretacao do LLM com heuristicas locais e defaults consistentes.
 export const normalizeIntentParsing = ({
   message,
   parsedIntent,
@@ -297,6 +319,8 @@ export const normalizeIntentParsing = ({
     resetMode: negativeSignals.resetMode
   });
   const hasCriteria = hasAnyCriteria(mergedIntent.criteria);
+  const missingRelativeReference =
+    getRelativePricePreference(message) !== undefined && !state.referenceCar;
   const heuristicGreeting =
     greetingPattern.test(message) && !hasCriteria && !hasHistory;
   const missingFields = inferMissingFields(mergedIntent.criteria);
@@ -313,6 +337,7 @@ export const normalizeIntentParsing = ({
     needsMoreInfo:
       heuristicGreeting ||
       mergedIntent.needsMoreInfo ||
+      missingRelativeReference ||
       (!hasCriteria && !hasHistory),
     missingFields:
       mergedIntent.missingFields.length > 0
@@ -321,6 +346,7 @@ export const normalizeIntentParsing = ({
   });
 };
 
+// Traduz a contagem de rejeicoes de cidade em um nivel de sensibilidade.
 const toLocationSensitivity = (
   locationRejectionCount: number
 ): SearchIntentState["locationSensitivity"] => {
@@ -333,6 +359,7 @@ const toLocationSensitivity = (
   return "medium";
 };
 
+// Traduz a resistencia de preco em um nivel de flexibilidade de orcamento.
 const toBudgetFlexibility = (
   budgetResistanceCount: number
 ): SearchIntentState["budgetFlexibility"] => {
@@ -345,67 +372,119 @@ const toBudgetFlexibility = (
   return "moderate";
 };
 
+// Evita contadores negativos quando o usuario flexibiliza uma restricao.
 const clampToZero = (value: number): number => Math.max(0, value);
 
+// Retorna a primeira string realmente utilizavel entre varias fontes de contexto.
 const firstMeaningfulString = (
   ...values: Array<string | undefined>
 ): string | undefined => {
   return values.find((value) => value !== undefined && value.trim().length > 0);
 };
 
+// Retorna o primeiro numero disponivel respeitando a ordem de precedencia.
 const firstMeaningfulNumber = (
   ...values: Array<number | undefined>
 ): number | undefined => {
   return values.find((value) => value !== undefined);
 };
 
+// Resolve criterios relativos com base no carro de referencia atual da sessao.
 export const inferContextualCriteriaFromState = (
   message: string,
   state: SessionState
 ): Partial<SearchCarsInput> => {
-  const relativePrice = detectRelativePricePreference(message);
+  const relativePrice = getRelativePricePreference(message);
 
-  if (!state.lastViewedCar || !relativePrice) {
+  if (!state.referenceCar || !relativePrice) {
     return {};
   }
 
   if (relativePrice === "higher") {
     return {
-      minPrice: state.lastViewedCar.price + 1,
+      minPrice: state.referenceCar.price + 1,
       maxPrice: undefined
     };
   }
 
   return {
     minPrice: undefined,
-    maxPrice: Math.max(state.lastViewedCar.price - 1, 1)
+    maxPrice: Math.max(state.referenceCar.price - 1, 1)
   };
 };
 
+// Decide quando a mudanca de cidade ou um reset invalida as ancoras atuais.
+export const shouldClearSearchAnchors = ({
+  overrides,
+  parsedCriteria,
+  locationResolution,
+  resetMode,
+  state
+}: {
+  overrides: Partial<SearchCarsInput>;
+  parsedCriteria: Partial<SearchCarsInput>;
+  locationResolution?: LocationResolution;
+  resetMode: z.infer<typeof resetModeSchema>;
+  state: SessionState;
+}): boolean => {
+  if (resetMode === "search") {
+    return true;
+  }
+
+  const hasExplicitLocationSignal =
+    locationResolution?.hasExplicitLocationHint ||
+    overrides.location !== undefined ||
+    parsedCriteria.location !== undefined;
+
+  if (!hasExplicitLocationSignal) {
+    return false;
+  }
+
+  const nextLocation = firstMeaningfulString(
+    overrides.location,
+    parsedCriteria.location,
+    locationResolution?.location
+  );
+  const currentLocation = state.currentFilters.location;
+
+  if (!nextLocation || !currentLocation) {
+    return true;
+  }
+
+  return normalize(nextLocation) !== normalize(currentLocation);
+};
+
+// Mescla overrides, parser e estado anterior em um conjunto final de criterios.
 export const resolveCriteriaWithState = (
   overrides: Partial<SearchCarsInput>,
   parsedCriteria: Partial<SearchCarsInput>,
-  state: SessionState
-): Partial<SearchCarsInput> => {
+  state: SessionState,
+  options?: {
+    locationResolution?: LocationResolution;
+  }
+): CriteriaResolutionResult => {
   const message = overrides.query ?? parsedCriteria.query ?? "";
-  const relativePricePreference = detectRelativePricePreference(message);
-  const contextualCriteria = inferContextualCriteriaFromState(message, state);
+  const relativePricePreference = getRelativePricePreference(message);
   const inheritedExcludedItems = uniqueItems([
     ...(state.rejectedItems ?? []),
     ...(parsedCriteria.excludedItems ?? []),
     ...(overrides.excludedItems ?? [])
   ]);
   const shouldClearBySearchReset = resetSearchPattern.test(message);
+  const hasExplicitLocationSignal =
+    options?.locationResolution?.hasExplicitLocationHint ||
+    overrides.location !== undefined ||
+    parsedCriteria.location !== undefined;
   const shouldClearByModelReset =
     shouldClearBySearchReset || inheritedExcludedItems.length > 0;
   const shouldClearBrandContext =
     shouldClearBySearchReset ||
     lastViewedCarMatchesRejectedItems(state, inheritedExcludedItems);
+  const canInheritLocation = !shouldClearBySearchReset && !hasExplicitLocationSignal;
 
   const nextMinPrice = firstMeaningfulNumber(
     overrides.minPrice,
     parsedCriteria.minPrice,
-    contextualCriteria.minPrice,
     ...(relativePricePreference === "lower" || shouldClearBySearchReset
       ? []
       : [
@@ -416,7 +495,6 @@ export const resolveCriteriaWithState = (
   const nextMaxPrice = firstMeaningfulNumber(
     overrides.maxPrice,
     parsedCriteria.maxPrice,
-    contextualCriteria.maxPrice,
     ...(relativePricePreference === "higher" || shouldClearBySearchReset
       ? []
       : [
@@ -425,7 +503,22 @@ export const resolveCriteriaWithState = (
         ])
   );
 
-  return {
+  const nextLocation = firstMeaningfulString(
+    overrides.location,
+    parsedCriteria.location,
+    ...(canInheritLocation
+      ? [
+          state.currentFilters.location,
+          state.intentState.preferredCriteria.location
+        ]
+      : [])
+  );
+  const hasExplicitPrice =
+    overrides.minPrice !== undefined ||
+    overrides.maxPrice !== undefined ||
+    parsedCriteria.minPrice !== undefined ||
+    parsedCriteria.maxPrice !== undefined;
+  const nextCriteria = {
     query: firstMeaningfulString(
       overrides.query,
       parsedCriteria.query,
@@ -451,12 +544,7 @@ export const resolveCriteriaWithState = (
             state.intentState.preferredCriteria.model
           ])
     ),
-    location: firstMeaningfulString(
-      overrides.location,
-      parsedCriteria.location,
-      state.currentFilters.location,
-      state.intentState.preferredCriteria.location
-    ),
+    location: nextLocation,
     minPrice:
       nextMinPrice && nextMaxPrice && nextMinPrice > nextMaxPrice
         ? undefined
@@ -470,11 +558,42 @@ export const resolveCriteriaWithState = (
       parsedCriteria.limit,
       state.currentFilters.limit,
       3
-    ),
+      ),
     excludedItems: inheritedExcludedItems
+  };
+  const locationOrigin: SessionFilterMeta["locationOrigin"] =
+    !nextLocation
+      ? "none"
+      : overrides.location !== undefined
+        ? "explicit"
+        : options?.locationResolution?.origin === "alias"
+          ? "alias"
+          : parsedCriteria.location !== undefined ||
+              options?.locationResolution?.origin === "explicit"
+            ? "explicit"
+            : "inherited";
+  const priceOrigin: SessionFilterMeta["priceOrigin"] =
+    relativePricePreference !== undefined && state.referenceCar
+      ? "relative"
+      : hasExplicitPrice
+        ? "explicit"
+        : nextCriteria.minPrice !== undefined || nextCriteria.maxPrice !== undefined
+          ? "inherited"
+          : "none";
+
+  return {
+    criteria: nextCriteria,
+    filterMeta: {
+      locationOrigin,
+      priceOrigin,
+      fallbackPolicy: state.filterMeta.fallbackPolicy
+    },
+    missingRelativeAnchor:
+      relativePricePreference !== undefined && !state.referenceCar
   };
 };
 
+// Define se a mensagem justifica uma consulta ao inventario neste turno.
 export const shouldRunInventorySearch = ({
   message,
   parsedIntent,
@@ -493,7 +612,7 @@ export const shouldRunInventorySearch = ({
   const normalizedMessage = normalize(message);
   const hasCriteria = hasAnyCriteria(effectiveCriteria);
   const hasRelativeReference =
-    Boolean(state.lastViewedCar) &&
+    Boolean(state.referenceCar) &&
     /\b(esse|este|this one|mais caro|mais barato|more expensive|cheaper)\b/.test(
       normalizedMessage
     );
@@ -507,6 +626,7 @@ export const shouldRunInventorySearch = ({
   return hasCriteria || hasRelativeReference || hasSearchVerb || hasRejectionOrReset;
 };
 
+// Atualiza a memoria de intencao com sinais de rigidez de localizacao e preco.
 export const evolveSearchIntentState = ({
   previousState,
   userMessage,
@@ -559,6 +679,7 @@ export const evolveSearchIntentState = ({
   if (parsedIntent.resetMode === "search") {
     delete preferredCriteria.brand;
     delete preferredCriteria.model;
+    delete preferredCriteria.location;
     delete preferredCriteria.minPrice;
     delete preferredCriteria.maxPrice;
   }

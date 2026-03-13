@@ -1,3 +1,4 @@
+// Este arquivo concentra o formato oficial do estado de sessao usado no workflow.
 import { z } from "zod";
 import { imageSourceSchema } from "@/domain/car";
 import {
@@ -38,10 +39,35 @@ export const sessionFactMemorySchema = z.object({
   budgetMax: z.number().positive().optional()
 });
 
+export const locationOriginSchema = z.enum([
+  "none",
+  "explicit",
+  "alias",
+  "inherited"
+]);
+export const priceOriginSchema = z.enum([
+  "none",
+  "explicit",
+  "relative",
+  "inherited"
+]);
+export const fallbackPolicySchema = z.enum([
+  "allow_mismatch_once",
+  "same_scope_only"
+]);
+
+export const sessionFilterMetaSchema = z.object({
+  locationOrigin: locationOriginSchema.default("none"),
+  priceOrigin: priceOriginSchema.default("none"),
+  fallbackPolicy: fallbackPolicySchema.default("allow_mismatch_once")
+});
+
 export const sessionStateSchema = z.object({
   intentState: searchIntentStateSchema.default(createInitialSearchIntentState()),
   currentFilters: sessionFiltersSchema.default({}),
+  referenceCar: sessionCarReferenceSchema.nullable().default(null),
   lastViewedCar: sessionCarReferenceSchema.nullable().default(null),
+  filterMeta: sessionFilterMetaSchema.default({}),
   rejectedItems: z.array(rejectedItemSchema).default([]),
   mismatchPersuasionByCar: z.record(z.number().int().min(0)).default({}),
   recentTurns: z.array(sessionTurnSchema).default([]),
@@ -51,6 +77,8 @@ export const sessionStateSchema = z.object({
 
 export type SessionState = z.infer<typeof sessionStateSchema>;
 export type SessionCarReference = z.infer<typeof sessionCarReferenceSchema>;
+export type SessionFilterMeta = z.infer<typeof sessionFilterMetaSchema>;
 
+// Cria um estado inicial consistente para novas conversas.
 export const createInitialSessionState = (): SessionState =>
   sessionStateSchema.parse({});

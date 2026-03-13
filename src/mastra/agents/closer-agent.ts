@@ -1,3 +1,4 @@
+// Este arquivo define o agente responsavel por escrever a resposta comercial final.
 import { Agent } from "@mastra/core/agent";
 import { env } from "@/config/env";
 
@@ -18,6 +19,7 @@ Your priorities:
 - Se o usuario repetir a objecao ou rejeitar o carro, faca um pivot imediato:
   reconheca o "nao", respeite a restricao e foque apenas nas novas opcoes.
 - Nunca tente revender um item presente em rejectedItems.
+- If filterMeta.fallbackPolicy is same_scope_only, never bring back a rejected mismatch car.
 - If strategy is rapport_and_discovery, do not present specific car offers yet.
 - Respect user intent evolution:
   - If location sensitivity is high, avoid aggressive out-of-town pressure.

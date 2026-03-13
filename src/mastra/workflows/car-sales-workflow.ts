@@ -1,25 +1,34 @@
+// Este arquivo orquestra o fluxo completo entre interpretacao, busca e resposta.
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { env } from "@/config/env";
 import { imageSourceSchema } from "@/domain/car";
-import { sessionStateSchema } from "@/domain/session-state";
+import {
+  fallbackPolicySchema,
+  sessionFilterMetaSchema,
+  sessionStateSchema
+} from "@/domain/session-state";
 import { JsonCarRepository } from "@/infrastructure/repositories/json-car-repository";
 import { researcherAgent } from "@/mastra/agents/researcher-agent";
 import { closerAgent } from "@/mastra/agents/closer-agent";
 import { searchCarsTool } from "@/mastra/tools/search-cars-tool";
 import {
   evolveSearchIntentState,
-  inferContextualCriteriaFromState,
+  getRelativePricePreference,
   intentParsingSchema,
   missingFieldSchema,
   normalizeIntentParsing,
-  resolveCriteriaWithState,
   shouldRunInventorySearch
 } from "@/application/services/search-intent-evolution";
-import { parseCriteriaFromMessage } from "@/application/services/criteria-parser";
 import { searchIntentStateSchema } from "@/domain/search-intent";
 import { buildFallbackReply } from "@/application/services/sales-reply";
+import { resolveSearchRequestFromState } from "@/application/services/search-request-resolution";
+import {
+  buildCarReferenceKey,
+  deriveCarContextAfterSearch
+} from "@/application/services/search-session-state";
 
+// Normaliza texto para comparacoes internas do workflow.
 const normalize = (value: string): string =>
   value
     .normalize("NFD")
@@ -27,40 +36,12 @@ const normalize = (value: string): string =>
     .toLowerCase()
     .trim();
 
+// Remove duplicatas de listas como itens rejeitados.
 const uniqueItems = (items: string[]): string[] => {
   return items.filter(
     (item, index) =>
       items.findIndex((candidate) => normalize(candidate) === normalize(item)) ===
       index
-  );
-};
-
-const buildCarReferenceKey = ({
-  name,
-  model
-}: {
-  name: string;
-  model: string;
-}): string => {
-  return `${name} ${model}`.trim();
-};
-
-const isCurrentCarRejected = (
-  currentState: z.infer<typeof sessionStateSchema>,
-  rejectedItems: string[]
-): boolean => {
-  if (!currentState.lastViewedCar || rejectedItems.length === 0) {
-    return false;
-  }
-
-  const currentCarValues = [
-    currentState.lastViewedCar.name,
-    currentState.lastViewedCar.model,
-    buildCarReferenceKey(currentState.lastViewedCar)
-  ];
-
-  return rejectedItems.some((item) =>
-    currentCarValues.some((value) => normalize(value) === normalize(item))
   );
 };
 
@@ -73,6 +54,11 @@ const searchCriteriaSchema = z.object({
   location: z.string().optional(),
   limit: z.number().int().min(1).max(8).optional(),
   excludedItems: z.array(z.string()).optional()
+});
+
+const resolvedSearchCriteriaSchema = searchCriteriaSchema.extend({
+  strictLocation: z.boolean().optional(),
+  fallbackPolicy: fallbackPolicySchema.optional()
 });
 
 const workflowInputSchema = z.object({
@@ -134,7 +120,8 @@ const workflowSearchResultSchema = z.object({
 const workflowOutputSchema = z.object({
   reply: z.string().min(1),
   result: workflowSearchResultSchema,
-  effectiveCriteria: searchCriteriaSchema,
+  effectiveCriteria: resolvedSearchCriteriaSchema,
+  filterMeta: sessionFilterMetaSchema,
   strategy: strategySchema,
   intentState: searchIntentStateSchema,
   parsedIntent: intentParsingSchema
@@ -151,7 +138,9 @@ const dataRetrievalOutputSchema = z.object({
   sessionId: z.string(),
   message: z.string(),
   parsedIntent: intentParsingSchema,
-  effectiveCriteria: searchCriteriaSchema,
+  effectiveCriteria: resolvedSearchCriteriaSchema,
+  filterMeta: sessionFilterMetaSchema,
+  shouldClearAnchors: z.boolean(),
   result: workflowSearchResultSchema
 });
 
@@ -159,12 +148,15 @@ const strategySelectionOutputSchema = z.object({
   sessionId: z.string(),
   message: z.string(),
   parsedIntent: intentParsingSchema,
-  effectiveCriteria: searchCriteriaSchema,
+  effectiveCriteria: resolvedSearchCriteriaSchema,
+  filterMeta: sessionFilterMetaSchema,
+  shouldClearAnchors: z.boolean(),
   result: workflowSearchResultSchema,
   strategy: strategySchema,
   intentState: searchIntentStateSchema
 });
 
+// Monta a resposta de descoberta quando ainda faltam filtros importantes.
 const buildDiscoveryReply = (
   missingFields: Array<z.infer<typeof missingFieldSchema>>
 ): string => {
@@ -182,13 +174,14 @@ const buildDiscoveryReply = (
 
   const questions = selected.map((field) => questionByField[field]).join(" ");
 
-  return `Oi! Que bom falar com voce. Posso te ajudar a encontrar a melhor opcao sem pressa. ${questions}`.trim();
+  return `Oi! Que bom falar com voce. Posso te ajudar a encontrar o carro que mais combina com você ${questions}`.trim();
 };
 
 const intentParsingStep = createStep({
   id: "intent-parsing",
   inputSchema: workflowInputSchema,
   outputSchema: intentParsingOutputSchema,
+  // Interpreta a mensagem do usuario e produz uma estrutura de intencao confiavel.
   execute: async ({ inputData, state }) => {
     const currentState = sessionStateSchema.parse(state ?? {});
     const prompt = `
@@ -200,12 +193,15 @@ Classifique:
 - missingFields: lista com brand, model, maxPrice e location ausentes
 - Se houver rejeicao explicita, preencha rejectedItems com marca, modelo ou a combinacao do carro rejeitado.
 - Se o usuario disser "esquece isso" ou "quero outra coisa", marque resetMode como search.
-- Se o usuario rejeitar a oferta atual com "nao quero esse", "chega desse" ou equivalente,
-  marque resetMode como model e use o carro do Current State como item rejeitado.
-- Se o usuario disser "mais caro que esse", "mais barato que esse", "acima desse" ou equivalente,
-  use o Current State para preencher criteria.minPrice ou criteria.maxPrice com base no lastViewedCar.price.
-- Preserve os filtros atuais quando o usuario estiver refinando a busca, a menos que ele troque marca,
-  modelo, cidade ou faixa de preco explicitamente.
+	- Se o usuario rejeitar a oferta atual com "nao quero esse", "chega desse" ou equivalente,
+	  marque resetMode como model e use o carro do Current State como item rejeitado.
+	- Se o usuario disser "mais caro que esse", "mais barato que esse", "acima desse" ou equivalente,
+	  use o Current State.referenceCar para preencher criteria.minPrice ou criteria.maxPrice.
+	- Se Current State.referenceCar for null em uma referencia relativa de preco, nao invente valores.
+	- Use Current State.filterMeta para decidir se uma cidade anterior pode ser herdada.
+	- Se houver troca explicita de cidade ou localizacao ambigua, nao preserve a cidade anterior.
+	- Preserve os filtros atuais quando o usuario estiver refinando a busca, a menos que ele troque marca,
+	  modelo, cidade ou faixa de preco explicitamente.
 
 Mensagem do usuario:
 ${inputData.message}
@@ -246,7 +242,6 @@ ${JSON.stringify(currentState, null, 2)}
           parsedIntent: intentParsingSchema.parse({
             normalizedMessage: inputData.message,
             criteria: {
-              ...inferContextualCriteriaFromState(inputData.message, currentState),
               ...inputData.overrides
             },
             behaviorSignals: {
@@ -264,36 +259,25 @@ const dataRetrievalStep = createStep({
   id: "data-retrieval",
   inputSchema: intentParsingOutputSchema,
   outputSchema: dataRetrievalOutputSchema,
+  // Resolve os filtros finais e consulta o inventario local com regras deterministicas.
   execute: async ({ inputData, state }) => {
     const currentState = sessionStateSchema.parse(state ?? {});
     const repository = new JsonCarRepository(env.CARS_DATA_PATH);
     const allCars = await repository.getAllCars();
-    const inferredCriteria = parseCriteriaFromMessage(allCars, inputData.message);
-    const normalizedParsedCriteria = {
-      query: inputData.message,
-      ...inferredCriteria,
-      ...inferContextualCriteriaFromState(inputData.message, currentState),
-      excludedItems: uniqueItems([
-        ...currentState.rejectedItems,
-        ...inputData.parsedIntent.rejectedItems
-      ]),
-      ...inputData.parsedIntent.criteria
-    };
-
-    const effectiveCriteria = resolveCriteriaWithState(
-      {
-        query: inputData.message,
-        ...(inputData.overrides ?? {})
-      },
-      normalizedParsedCriteria,
-      currentState
-    );
+    const resolution = resolveSearchRequestFromState({
+      cars: allCars,
+      message: inputData.message,
+      overrides: inputData.overrides ?? {},
+      parsedIntent: inputData.parsedIntent,
+      state: currentState
+    });
+    const effectiveCriteria = resolution.effectiveCriteria;
     const shouldSkipRetrieval = !shouldRunInventorySearch({
       message: inputData.message,
       parsedIntent: inputData.parsedIntent,
       effectiveCriteria,
       state: currentState
-    });
+    }) || resolution.missingRelativeAnchor;
 
     if (shouldSkipRetrieval) {
       return {
@@ -301,6 +285,8 @@ const dataRetrievalStep = createStep({
         message: inputData.message,
         parsedIntent: inputData.parsedIntent,
         effectiveCriteria,
+        filterMeta: resolution.filterMeta,
+        shouldClearAnchors: resolution.shouldClearAnchors,
         result: workflowSearchResultSchema.parse({
           scenario: "no_filtered_match",
           interpretedCriteria: {
@@ -329,7 +315,9 @@ const dataRetrievalStep = createStep({
       maxPrice: effectiveCriteria.maxPrice ?? null,
       location: effectiveCriteria.location ?? null,
       limit: effectiveCriteria.limit ?? null,
-      excludedItems: effectiveCriteria.excludedItems ?? null
+      excludedItems: effectiveCriteria.excludedItems ?? null,
+      strictLocation: effectiveCriteria.strictLocation ?? null,
+      fallbackPolicy: effectiveCriteria.fallbackPolicy ?? null
     }, {});
 
     return {
@@ -337,6 +325,8 @@ const dataRetrievalStep = createStep({
       message: inputData.message,
       parsedIntent: inputData.parsedIntent,
       effectiveCriteria,
+      filterMeta: resolution.filterMeta,
+      shouldClearAnchors: resolution.shouldClearAnchors,
       result: workflowSearchResultSchema.parse(result)
     };
   }
@@ -346,6 +336,7 @@ const strategySelectionStep = createStep({
   id: "strategy-selection",
   inputSchema: dataRetrievalOutputSchema,
   outputSchema: strategySelectionOutputSchema,
+  // Escolhe a estrategia comercial e persiste o novo estado da sessao.
   execute: async ({ inputData, state, setState }) => {
     const currentState = sessionStateSchema.parse(state ?? {});
     const currentSuggestion = inputData.result.suggestions[0]?.car;
@@ -395,7 +386,12 @@ const strategySelectionStep = createStep({
       ...currentState.rejectedItems,
       ...inputData.parsedIntent.rejectedItems
     ]);
-    const rejectedCurrentCar = isCurrentCarRejected(currentState, nextRejectedItems);
+    const nextCarContext = deriveCarContextAfterSearch({
+      previousState: currentState,
+      result: inputData.result,
+      rejectedItems: nextRejectedItems,
+      shouldClearAnchors: inputData.shouldClearAnchors
+    });
 
     await setState({
       ...currentState,
@@ -409,8 +405,10 @@ const strategySelectionStep = createStep({
         maxPrice: inputData.effectiveCriteria.maxPrice,
         limit: inputData.effectiveCriteria.limit
       },
+      filterMeta: inputData.filterMeta,
       rejectedItems: nextRejectedItems,
-      lastViewedCar: inputData.result.suggestions[0]?.car ?? (rejectedCurrentCar ? null : currentState.lastViewedCar)
+      lastViewedCar: nextCarContext.lastViewedCar,
+      referenceCar: nextCarContext.referenceCar
     });
 
     return {
@@ -425,14 +423,32 @@ const persuasiveResponseStep = createStep({
   id: "persuasive-response",
   inputSchema: strategySelectionOutputSchema,
   outputSchema: workflowOutputSchema,
+  // Gera a fala final do vendedor respeitando rejeicoes e limites de persuasao.
   execute: async ({ inputData, state }) => {
     const currentState = sessionStateSchema.parse(state ?? {});
+    const needsReferenceSelection =
+      getRelativePricePreference(inputData.message) !== undefined &&
+      !currentState.referenceCar;
+
+    if (needsReferenceSelection) {
+      return {
+        reply:
+          "Para comparar preco com precisao, me diga primeiro qual carro voce quer usar como referencia.",
+        result: inputData.result,
+        effectiveCriteria: inputData.effectiveCriteria,
+        filterMeta: inputData.filterMeta,
+        strategy: inputData.strategy,
+        intentState: inputData.intentState,
+        parsedIntent: inputData.parsedIntent
+      };
+    }
 
     if (inputData.strategy.approach === "rapport_and_discovery") {
       return {
         reply: buildDiscoveryReply(inputData.parsedIntent.missingFields),
         result: inputData.result,
         effectiveCriteria: inputData.effectiveCriteria,
+        filterMeta: inputData.filterMeta,
         strategy: inputData.strategy,
         intentState: inputData.intentState,
         parsedIntent: inputData.parsedIntent
@@ -452,15 +468,19 @@ ${JSON.stringify(inputData.strategy, null, 2)}
 Estado evolutivo da intencao:
 ${JSON.stringify(inputData.intentState, null, 2)}
 
-Estado comercial atual:
-${JSON.stringify(
-      {
-        rejectedItems: currentState.rejectedItems,
-        lastViewedCar: currentState.lastViewedCar,
-        mismatchPersuasionByCar: currentState.mismatchPersuasionByCar,
-        currentSuggestionPersuasionCount: inputData.result.suggestions[0]
-          ? currentState.mismatchPersuasionByCar[
-              buildCarReferenceKey(inputData.result.suggestions[0].car)
+	Estado comercial atual:
+	${JSON.stringify(
+	      {
+	        currentFilters: currentState.currentFilters,
+	        filterMeta: currentState.filterMeta,
+	        rejectedItems: currentState.rejectedItems,
+	        referenceCar: currentState.referenceCar,
+	        lastViewedCar: currentState.lastViewedCar,
+	        historySummary: currentState.historySummary,
+	        mismatchPersuasionByCar: currentState.mismatchPersuasionByCar,
+	        currentSuggestionPersuasionCount: inputData.result.suggestions[0]
+	          ? currentState.mismatchPersuasionByCar[
+	              buildCarReferenceKey(inputData.result.suggestions[0].car)
             ] ?? 0
           : 0
       },
@@ -471,14 +491,18 @@ ${JSON.stringify(
 Resultado de busca:
 ${JSON.stringify(inputData.result, null, 2)}
 
-Importante:
-- Se a estrategia for rapport_and_discovery, acolha e faca perguntas curtas.
-- Nesse modo, nao tente fechar venda e nao pressione com CTA.
-- Se o usuario rejeitou a oferta atual ou se currentSuggestionPersuasionCount for maior que zero em um mismatch,
-  reconheca o "nao" imediatamente e faca pivot para as novas opcoes.
-- Em qualquer argumentacao de price_mismatch ou location_mismatch, termine com:
-  "Ou voce prefere que eu procure outras opcoes dentro do seu criterio original?"
-`;
+	Importante:
+	- Se a estrategia for rapport_and_discovery, acolha e faca perguntas curtas.
+	- Nesse modo, nao tente fechar venda e nao pressione com CTA.
+	- Treat historySummary as supporting context only. Current filters, filterMeta, referenceCar,
+	  lastViewedCar and rejectedItems are the source of truth.
+	- Se o usuario rejeitou a oferta atual ou se currentSuggestionPersuasionCount for maior que zero em um mismatch,
+	  reconheca o "nao" imediatamente e faca pivot para as novas opcoes.
+	- If filterMeta.fallbackPolicy is same_scope_only or the current car is in rejectedItems,
+	  do not mention the rejected mismatch car again.
+	- Em qualquer argumentacao de price_mismatch ou location_mismatch, termine com:
+	  "Ou voce prefere que eu procure outras opcoes dentro do seu criterio original?"
+	`;
 
     try {
       const generation = await closerAgent.generate(prompt);
@@ -489,6 +513,7 @@ Importante:
           reply,
           result: inputData.result,
           effectiveCriteria: inputData.effectiveCriteria,
+          filterMeta: inputData.filterMeta,
           strategy: inputData.strategy,
           intentState: inputData.intentState,
           parsedIntent: inputData.parsedIntent
@@ -502,6 +527,7 @@ Importante:
       reply: buildFallbackReply(inputData.result),
       result: inputData.result,
       effectiveCriteria: inputData.effectiveCriteria,
+      filterMeta: inputData.filterMeta,
       strategy: inputData.strategy,
       intentState: inputData.intentState,
       parsedIntent: inputData.parsedIntent

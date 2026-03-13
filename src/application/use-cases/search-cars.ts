@@ -1,3 +1,4 @@
+// Este arquivo executa a busca no inventario local com regras de fallback controladas.
 import type {
   Car,
   CarSuggestion,
@@ -7,6 +8,7 @@ import type {
 import type { CarRepository } from "@/application/ports/car-repository";
 import { parseCriteriaFromMessage } from "@/application/services/criteria-parser";
 
+// Normaliza textos de marca, modelo e cidade para comparacoes consistentes.
 const normalize = (value: string): string =>
   value
     .normalize("NFD")
@@ -14,9 +16,11 @@ const normalize = (value: string): string =>
     .toLowerCase()
     .trim();
 
+// Compara cidades ignorando variacoes simples de escrita.
 const locationEquals = (a: string, b: string): boolean =>
   normalize(a) === normalize(b);
 
+// Verifica se um valor atende ao termo pedido pelo usuario.
 const includesTerm = (value: string, term?: string): boolean => {
   if (!term) {
     return true;
@@ -24,6 +28,7 @@ const includesTerm = (value: string, term?: string): boolean => {
   return normalize(value).includes(normalize(term));
 };
 
+// Remove carros ja rejeitados pelo usuario do conjunto candidato.
 const isRejectedCar = (car: Car, rejectedItems: string[] = []): boolean => {
   if (rejectedItems.length === 0) {
     return false;
@@ -43,6 +48,7 @@ const isRejectedCar = (car: Car, rejectedItems: string[] = []): boolean => {
   });
 };
 
+// Gera os pontos de venda exibidos junto das sugestoes do resultado.
 const buildSellingPoints = (
   car: Car,
   matchType: CarSuggestion["matchType"],
@@ -79,6 +85,7 @@ const buildSellingPoints = (
   ];
 };
 
+// Ordena carros pela proximidade do preco em relacao ao filtro ativo.
 const orderByPriceDistance = (
   cars: Car[],
   maxPrice?: number,
@@ -105,6 +112,7 @@ const orderByPriceDistance = (
 export class SearchCarsUseCase {
   constructor(private readonly carRepository: CarRepository) {}
 
+  // Executa a busca principal e aplica a politica de mismatch ou escopo estrito.
   async execute(input: SearchCarsInput): Promise<SearchCarsResult> {
     const allCars = await this.carRepository.getAllCars();
     const inferred = parseCriteriaFromMessage(allCars, input.query);
@@ -116,6 +124,8 @@ export class SearchCarsUseCase {
     const maxPrice = input.maxPrice ?? inferred.maxPrice;
     const limit = input.limit ?? 3;
     const excludedItems = input.excludedItems ?? [];
+    const strictLocation = input.strictLocation ?? false;
+    const fallbackPolicy = input.fallbackPolicy ?? "allow_mismatch_once";
     const hasActiveCriteria = Boolean(
       brand || model || location || minPrice || maxPrice
     );
@@ -184,7 +194,11 @@ export class SearchCarsUseCase {
       }
     }
 
-    if (relaxedFiltered.length > 0 && location) {
+    if (
+      relaxedFiltered.length > 0 &&
+      location &&
+      fallbackPolicy === "allow_mismatch_once"
+    ) {
       const differentLocation = relaxedFiltered.filter(
         (car) => !locationEquals(car.location, location)
       );
@@ -206,6 +220,14 @@ export class SearchCarsUseCase {
             }))
         };
       }
+    }
+
+    if (strictLocation && location) {
+      return {
+        scenario: "no_filtered_match",
+        interpretedCriteria: { brand, model, location, minPrice, maxPrice },
+        suggestions: []
+      };
     }
 
     const fallbackBase = allCars.filter((car) =>

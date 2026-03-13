@@ -1,9 +1,15 @@
+// Este arquivo resume a conversa e preserva memoria util entre os turnos.
 import type { SearchCarsInput, SearchCarsResult } from "@/domain/car";
 import type { SessionState } from "@/domain/session-state";
 import { sessionStateSchema } from "@/domain/session-state";
+import {
+  buildCarReferenceKey,
+  deriveCarContextAfterSearch
+} from "@/application/services/search-session-state";
 
 const MAX_SHORT_TERM_TURNS = 10;
 
+// Normaliza texto para deduplicar fatos e itens rejeitados.
 const normalize = (value: string): string =>
   value
     .normalize("NFD")
@@ -11,16 +17,7 @@ const normalize = (value: string): string =>
     .toLowerCase()
     .trim();
 
-const buildCarReferenceKey = ({
-  name,
-  model
-}: {
-  name: string;
-  model: string;
-}): string => {
-  return `${name} ${model}`.trim();
-};
-
+// Adiciona um valor so quando ele ainda nao existe na lista normalizada.
 const appendUnique = (items: string[], value?: string): string[] => {
   if (!value) {
     return items;
@@ -34,6 +31,7 @@ const appendUnique = (items: string[], value?: string): string[] => {
   return [...items, value];
 };
 
+// Extrai fatos curtos que ajudam a reconstruir o contexto comercial depois.
 const detectPrincipalFacts = (
   message: string,
   filters: Partial<SearchCarsInput>,
@@ -80,6 +78,7 @@ const detectPrincipalFacts = (
   return facts;
 };
 
+// Comprime o estado atual em um resumo textual de apoio para turnos longos.
 const buildHistorySummary = (state: SessionState): string => {
   const lines: string[] = [];
 
@@ -122,6 +121,12 @@ const buildHistorySummary = (state: SessionState): string => {
     );
   }
 
+  if (state.referenceCar) {
+    lines.push(
+      `Reference car for comparisons: ${state.referenceCar.name} ${state.referenceCar.model} por R$ ${state.referenceCar.price.toLocaleString("pt-BR")} em ${state.referenceCar.location}.`
+    );
+  }
+
   if (state.factMemory.principalFacts.length > 0) {
     lines.push(`Fatos principais: ${state.factMemory.principalFacts.join(" ")}`);
   }
@@ -129,12 +134,14 @@ const buildHistorySummary = (state: SessionState): string => {
   return lines.join(" ");
 };
 
+// Mantem somente a janela curta mais recente quando a conversa cresce demais.
 const trimRecentTurns = (
   turns: SessionState["recentTurns"]
 ): SessionState["recentTurns"] => {
   return turns.slice(-6);
 };
 
+// Marca a cidade atual como rejeitada quando a mensagem expressa rejeicao de local.
 const detectDislikedLocation = (
   message: string,
   currentLocation?: string
@@ -150,6 +157,7 @@ const detectDislikedLocation = (
   return undefined;
 };
 
+// Atualiza memoria curta, fatos persistidos e contadores apos cada resposta.
 export const updateSessionStateMemory = ({
   previousState,
   userMessage,
@@ -177,13 +185,21 @@ export const updateSessionStateMemory = ({
     mismatchPersuasionByCar[key] = (mismatchPersuasionByCar[key] ?? 0) + 1;
   }
 
+  const carContext = deriveCarContextAfterSearch({
+    previousState,
+    result,
+    rejectedItems: previousState.rejectedItems,
+    shouldClearAnchors: false
+  });
+
   const nextState = sessionStateSchema.parse({
     ...previousState,
     currentFilters: {
       ...previousState.currentFilters,
       ...filters
     },
-    lastViewedCar: topSuggestion ?? previousState.lastViewedCar,
+    lastViewedCar: carContext.lastViewedCar,
+    referenceCar: carContext.referenceCar,
     mismatchPersuasionByCar,
     recentTurns: [
       ...previousState.recentTurns,

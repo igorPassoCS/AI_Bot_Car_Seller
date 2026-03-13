@@ -1,3 +1,4 @@
+// Este arquivo adapta o caso de uso de busca para o formato de tool do Mastra.
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { env } from "@/config/env";
@@ -11,11 +12,15 @@ const inputSchema = z.object({
   brand: z.string().trim().min(1).nullable(),
   model: z.string().trim().min(1).nullable(),
   minPrice: z.number().positive().nullable(),
-  maxPrice: z.number().positive().nullable(),
-  location: z.string().trim().min(1).nullable(),
-  limit: z.number().int().min(1).max(8).nullable(),
-  excludedItems: z.array(z.string().trim().min(1)).nullable()
-});
+    maxPrice: z.number().positive().nullable(),
+    location: z.string().trim().min(1).nullable(),
+    limit: z.number().int().min(1).max(8).nullable(),
+    excludedItems: z.array(z.string().trim().min(1)).nullable(),
+    strictLocation: z.boolean().nullable(),
+    fallbackPolicy: z
+      .enum(["allow_mismatch_once", "same_scope_only"])
+      .nullable()
+  });
 
 const outputSchema = z.object({
   scenario: z.string(),
@@ -41,10 +46,12 @@ const outputSchema = z.object({
   )
 });
 
+// Converte null vindo da tool em undefined para o caso de uso interno.
 const toOptional = <T>(value: T | null): T | undefined => {
   return value === null ? undefined : value;
 };
 
+// Normaliza o payload da tool para o formato usado pela busca local.
 const normalizeToolInput = (
   input: z.infer<typeof inputSchema>
 ): SearchCarsInput => {
@@ -56,7 +63,9 @@ const normalizeToolInput = (
     maxPrice: toOptional(input.maxPrice),
     location: toOptional(input.location),
     limit: toOptional(input.limit),
-    excludedItems: toOptional(input.excludedItems)
+    excludedItems: toOptional(input.excludedItems),
+    strictLocation: toOptional(input.strictLocation),
+    fallbackPolicy: toOptional(input.fallbackPolicy)
   };
 };
 
