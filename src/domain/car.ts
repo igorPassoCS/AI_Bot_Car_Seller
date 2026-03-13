@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const imageSourceSchema = z.string().trim().refine(
+export const imageSourceSchema = z.string().trim().refine(
   (value) => {
     if (value.startsWith("/")) {
       return true;

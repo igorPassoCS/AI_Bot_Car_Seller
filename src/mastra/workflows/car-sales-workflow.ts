@@ -1,6 +1,7 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { env } from "@/config/env";
+import { imageSourceSchema } from "@/domain/car";
 import { JsonCarRepository } from "@/infrastructure/repositories/json-car-repository";
 import { SearchCarsUseCase } from "@/application/use-cases/search-cars";
 import { researcherAgent } from "@/mastra/agents/researcher-agent";
@@ -64,7 +65,7 @@ const workflowSearchResultSchema = z.object({
       car: z.object({
         name: z.string(),
         model: z.string(),
-        image: z.string().url(),
+        image: imageSourceSchema,
         price: z.number(),
         location: z.string()
       }),
