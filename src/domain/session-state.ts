@@ -23,6 +23,8 @@ export const sessionCarReferenceSchema = z.object({
   location: z.string().min(1)
 });
 
+export const rejectedItemSchema = z.string().min(1);
+
 export const sessionTurnSchema = z.object({
   role: z.enum(["user", "assistant"]),
   text: z.string().min(1)
@@ -39,7 +41,9 @@ export const sessionFactMemorySchema = z.object({
 export const sessionStateSchema = z.object({
   intentState: searchIntentStateSchema.default(createInitialSearchIntentState()),
   currentFilters: sessionFiltersSchema.default({}),
-  lastViewedCar: sessionCarReferenceSchema.optional(),
+  lastViewedCar: sessionCarReferenceSchema.nullable().default(null),
+  rejectedItems: z.array(rejectedItemSchema).default([]),
+  mismatchPersuasionByCar: z.record(z.number().int().min(0)).default({}),
   recentTurns: z.array(sessionTurnSchema).default([]),
   historySummary: z.string().default(""),
   factMemory: sessionFactMemorySchema.default({})

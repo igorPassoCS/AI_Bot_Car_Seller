@@ -5,7 +5,7 @@ import type { SessionState } from "@/domain/session-state";
 import { searchIntentStateSchema } from "@/domain/search-intent";
 
 const locationStrictPattern =
-  /\b(nao quero|não quero|somente|apenas|so em|s[oó] em|must be|only in|nao aceito outra cidade|não aceito outra cidade|nao vou viajar|não vou viajar)\b/i;
+  /\b(nao quero|não quero|somente|apenas|so em|s[oó] em|must be|only in|nao aceito outra cidade|não aceito outra cidade|nao vou viajar|não vou viajar|tem que ser)\b/i;
 const locationOpenPattern =
   /\b(qualquer cidade|pode ser outra cidade|aceito entrega|entrega|posso viajar|travel|any city|tanto faz a cidade)\b/i;
 const budgetStrictPattern =
@@ -14,6 +14,12 @@ const budgetFlexiblePattern =
   /\b(posso aumentar|tenho flexibilidade|consigo subir|aceito pagar mais|esticar o orcamento|esticar o orçamento|a little more|can stretch)\b/i;
 const greetingPattern =
   /^\s*(oi|ola|olá|opa|aoba|e ai|e aí|bom dia|boa tarde|boa noite|hello|hi|hey)\W*$/i;
+const explicitRejectionPattern =
+  /\b(nao quero|não quero|chega desse|chega disto|dispenso|descarta|descartar|not the|not this|esse nao|esse não|esse ai nao|esse aí não)\b/i;
+const currentOfferRejectionPattern =
+  /\b(chega desse|chega disto|esse nao|esse não|esse ai nao|esse aí não|nao quero esse|não quero esse|nao esse|não esse|not this|not this one)\b/i;
+const resetSearchPattern =
+  /\b(esquece isso|quero outra coisa|quero algo diferente|outra coisa|muda isso|muda tudo|troca tudo|vamos do zero)\b/i;
 
 const normalize = (value: string): string =>
   value
@@ -21,6 +27,66 @@ const normalize = (value: string): string =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+
+const uniqueItems = (items: string[]): string[] => {
+  return items.filter(
+    (item, index) =>
+      items.findIndex((candidate) => normalize(candidate) === normalize(item)) ===
+      index
+  );
+};
+
+const buildCarReferenceKey = ({
+  name,
+  model
+}: {
+  name: string;
+  model: string;
+}): string => {
+  return `${name} ${model}`.trim();
+};
+
+const matchesRejectedItem = (
+  candidate: string,
+  rejectedItem: string
+): boolean => {
+  return normalize(candidate) === normalize(rejectedItem);
+};
+
+const lastViewedCarMatchesRejectedItems = (
+  state: SessionState,
+  rejectedItems: string[]
+): boolean => {
+  if (!state.lastViewedCar || rejectedItems.length === 0) {
+    return false;
+  }
+
+  const values = [
+    state.lastViewedCar.name,
+    state.lastViewedCar.model,
+    buildCarReferenceKey(state.lastViewedCar)
+  ];
+
+  return rejectedItems.some((rejectedItem) =>
+    values.some((value) => matchesRejectedItem(value, rejectedItem))
+  );
+};
+
+const detectRelativePricePreference = (
+  message: string
+): "higher" | "lower" | undefined => {
+  if (/mais caro|more expensive|acima desse|acima deste|superior a esse/i.test(message)) {
+    return "higher";
+  }
+
+  if (/mais barato|cheaper|menos caro|abaixo desse|abaixo deste|inferior a esse/i.test(message)) {
+    return "lower";
+  }
+
+  return undefined;
+};
+
+export const resetModeSchema = z.enum(["none", "model", "search"]);
 
 const criteriaSchema = z.object({
   brand: z.string().optional(),
@@ -47,6 +113,8 @@ export const intentParsingSchema = z.object({
   needsMoreInfo: z.boolean().default(false),
   missingFields: z.array(missingFieldSchema).default([]),
   criteria: criteriaSchema.default({}),
+  rejectedItems: z.array(z.string().min(1)).default([]),
+  resetMode: resetModeSchema.default("none"),
   behaviorSignals: z
     .object({
       locationPreference: z.enum(["strict", "open", "unchanged"]).default("unchanged"),
@@ -74,6 +142,7 @@ const inferMissingFields = (
   criteria: Partial<SearchCarsInput>
 ): MissingField[] => {
   const missing: MissingField[] = [];
+
   if (!criteria.brand) {
     missing.push("brand");
   }
@@ -86,39 +155,168 @@ const inferMissingFields = (
   if (!criteria.location) {
     missing.push("location");
   }
+
   return missing;
+};
+
+const inferRejectedItemsFromState = ({
+  message,
+  state,
+  criteria
+}: {
+  message: string;
+  state: SessionState;
+  criteria: Partial<SearchCarsInput>;
+}): string[] => {
+  if (!explicitRejectionPattern.test(message) && !currentOfferRejectionPattern.test(message)) {
+    return [];
+  }
+
+  const rejectedItems: string[] = [];
+
+  if (criteria.model) {
+    rejectedItems.push(criteria.model);
+  }
+  if (criteria.brand) {
+    rejectedItems.push(criteria.brand);
+  }
+
+  if (
+    state.lastViewedCar &&
+    (currentOfferRejectionPattern.test(message) || rejectedItems.length === 0)
+  ) {
+    rejectedItems.push(state.lastViewedCar.model);
+    rejectedItems.push(buildCarReferenceKey(state.lastViewedCar));
+  }
+
+  return uniqueItems(rejectedItems);
+};
+
+const shouldPivotAfterRepeatedMismatch = ({
+  message,
+  parsedIntent,
+  state
+}: {
+  message: string;
+  parsedIntent: IntentParsingOutput;
+  state: SessionState;
+}): boolean => {
+  if (!state.lastViewedCar) {
+    return false;
+  }
+
+  const persuasionCount =
+    state.mismatchPersuasionByCar[buildCarReferenceKey(state.lastViewedCar)] ?? 0;
+  if (persuasionCount === 0) {
+    return false;
+  }
+
+  if (state.intentState.lastScenario === "location_mismatch") {
+    return (
+      parsedIntent.behaviorSignals.locationPreference === "strict" ||
+      locationStrictPattern.test(message)
+    );
+  }
+
+  if (state.intentState.lastScenario === "price_mismatch") {
+    return (
+      parsedIntent.behaviorSignals.budgetPreference === "strict" ||
+      budgetStrictPattern.test(message)
+    );
+  }
+
+  return false;
+};
+
+const inferNegativeIntentSignals = ({
+  message,
+  parsedIntent,
+  state
+}: {
+  message: string;
+  parsedIntent: IntentParsingOutput;
+  state: SessionState;
+}): Pick<IntentParsingOutput, "rejectedItems" | "resetMode"> => {
+  const inferredRejectedItems = inferRejectedItemsFromState({
+    message,
+    state,
+    criteria: parsedIntent.criteria
+  });
+  const shouldPivotCurrentCar = shouldPivotAfterRepeatedMismatch({
+    message,
+    parsedIntent,
+    state
+  });
+
+  if (shouldPivotCurrentCar && state.lastViewedCar) {
+    inferredRejectedItems.push(state.lastViewedCar.model);
+    inferredRejectedItems.push(buildCarReferenceKey(state.lastViewedCar));
+  }
+
+  const rejectedItems = uniqueItems([
+    ...parsedIntent.rejectedItems,
+    ...inferredRejectedItems
+  ]);
+
+  let resetMode: z.infer<typeof resetModeSchema> = parsedIntent.resetMode;
+
+  if (resetSearchPattern.test(message)) {
+    resetMode = "search";
+  } else if (
+    resetMode === "none" &&
+    (rejectedItems.length > 0 || currentOfferRejectionPattern.test(message))
+  ) {
+    resetMode = "model";
+  }
+
+  return {
+    rejectedItems,
+    resetMode
+  };
 };
 
 export const normalizeIntentParsing = ({
   message,
   parsedIntent,
-  hasHistory
+  hasHistory,
+  state
 }: {
   message: string;
   parsedIntent: IntentParsingOutput;
   hasHistory: boolean;
+  state: SessionState;
 }): IntentParsingOutput => {
-  const hasCriteria = hasAnyCriteria(parsedIntent.criteria);
+  const negativeSignals = inferNegativeIntentSignals({
+    message,
+    parsedIntent,
+    state
+  });
+  const mergedIntent = intentParsingSchema.parse({
+    ...parsedIntent,
+    rejectedItems: negativeSignals.rejectedItems,
+    resetMode: negativeSignals.resetMode
+  });
+  const hasCriteria = hasAnyCriteria(mergedIntent.criteria);
   const heuristicGreeting =
     greetingPattern.test(message) && !hasCriteria && !hasHistory;
-  const missingFields = inferMissingFields(parsedIntent.criteria);
+  const missingFields = inferMissingFields(mergedIntent.criteria);
 
   const fallbackIntentType: z.infer<typeof intentTypeSchema> = hasHistory
     ? "refinement"
     : "search";
 
   return intentParsingSchema.parse({
-    ...parsedIntent,
+    ...mergedIntent,
     intentType: heuristicGreeting
       ? "greeting"
-      : parsedIntent.intentType ?? fallbackIntentType,
+      : mergedIntent.intentType ?? fallbackIntentType,
     needsMoreInfo:
       heuristicGreeting ||
-      parsedIntent.needsMoreInfo ||
+      mergedIntent.needsMoreInfo ||
       (!hasCriteria && !hasHistory),
     missingFields:
-      parsedIntent.missingFields.length > 0
-        ? parsedIntent.missingFields
+      mergedIntent.missingFields.length > 0
+        ? mergedIntent.missingFields
         : missingFields
   });
 };
@@ -148,20 +346,6 @@ const toBudgetFlexibility = (
 };
 
 const clampToZero = (value: number): number => Math.max(0, value);
-
-const detectRelativePricePreference = (
-  message: string
-): "higher" | "lower" | undefined => {
-  if (/mais caro|more expensive|acima desse|acima deste|superior a esse/i.test(message)) {
-    return "higher";
-  }
-
-  if (/mais barato|cheaper|menos caro|abaixo desse|abaixo deste|inferior a esse/i.test(message)) {
-    return "lower";
-  }
-
-  return undefined;
-};
 
 const firstMeaningfulString = (
   ...values: Array<string | undefined>
@@ -203,18 +387,26 @@ export const resolveCriteriaWithState = (
   parsedCriteria: Partial<SearchCarsInput>,
   state: SessionState
 ): Partial<SearchCarsInput> => {
-  const relativePricePreference = detectRelativePricePreference(
-    overrides.query ?? parsedCriteria.query ?? ""
-  );
-  const contextualCriteria = inferContextualCriteriaFromState(
-    overrides.query ?? parsedCriteria.query ?? "",
-    state
-  );
+  const message = overrides.query ?? parsedCriteria.query ?? "";
+  const relativePricePreference = detectRelativePricePreference(message);
+  const contextualCriteria = inferContextualCriteriaFromState(message, state);
+  const inheritedExcludedItems = uniqueItems([
+    ...(state.rejectedItems ?? []),
+    ...(parsedCriteria.excludedItems ?? []),
+    ...(overrides.excludedItems ?? [])
+  ]);
+  const shouldClearBySearchReset = resetSearchPattern.test(message);
+  const shouldClearByModelReset =
+    shouldClearBySearchReset || inheritedExcludedItems.length > 0;
+  const shouldClearBrandContext =
+    shouldClearBySearchReset ||
+    lastViewedCarMatchesRejectedItems(state, inheritedExcludedItems);
+
   const nextMinPrice = firstMeaningfulNumber(
     overrides.minPrice,
     parsedCriteria.minPrice,
     contextualCriteria.minPrice,
-    ...(relativePricePreference === "lower"
+    ...(relativePricePreference === "lower" || shouldClearBySearchReset
       ? []
       : [
           state.currentFilters.minPrice,
@@ -225,7 +417,7 @@ export const resolveCriteriaWithState = (
     overrides.maxPrice,
     parsedCriteria.maxPrice,
     contextualCriteria.maxPrice,
-    ...(relativePricePreference === "higher"
+    ...(relativePricePreference === "higher" || shouldClearBySearchReset
       ? []
       : [
           state.currentFilters.maxPrice,
@@ -237,19 +429,27 @@ export const resolveCriteriaWithState = (
     query: firstMeaningfulString(
       overrides.query,
       parsedCriteria.query,
-      state.currentFilters.query
+      shouldClearBySearchReset ? undefined : state.currentFilters.query
     ),
     brand: firstMeaningfulString(
       overrides.brand,
       parsedCriteria.brand,
-      state.currentFilters.brand,
-      state.intentState.preferredCriteria.brand
+      ...(shouldClearBrandContext
+        ? []
+        : [
+            state.currentFilters.brand,
+            state.intentState.preferredCriteria.brand
+          ])
     ),
     model: firstMeaningfulString(
       overrides.model,
       parsedCriteria.model,
-      state.currentFilters.model,
-      state.intentState.preferredCriteria.model
+      ...(shouldClearByModelReset
+        ? []
+        : [
+            state.currentFilters.model,
+            state.intentState.preferredCriteria.model
+          ])
     ),
     location: firstMeaningfulString(
       overrides.location,
@@ -271,6 +471,7 @@ export const resolveCriteriaWithState = (
       state.currentFilters.limit,
       3
     ),
+    excludedItems: inheritedExcludedItems
   };
 };
 
@@ -297,11 +498,13 @@ export const shouldRunInventorySearch = ({
       normalizedMessage
     );
   const hasSearchVerb =
-    /\b(quero|buscar|busca|encontre|encontrar|procuro|procurando|mostrar|mostre|compare|comparar|versus|vs|similar)\b/.test(
+    /\b(quero|buscar|busca|encontre|encontrar|procuro|procurando|mostrar|mostre|compare|comparar|versus|vs|similar|outra opcao|outra opção)\b/.test(
       normalizedMessage
     );
+  const hasRejectionOrReset =
+    parsedIntent.rejectedItems.length > 0 || parsedIntent.resetMode !== "none";
 
-  return hasCriteria || hasRelativeReference || hasSearchVerb;
+  return hasCriteria || hasRelativeReference || hasSearchVerb || hasRejectionOrReset;
 };
 
 export const evolveSearchIntentState = ({
@@ -352,6 +555,17 @@ export const evolveSearchIntentState = ({
       )
     )
   };
+
+  if (parsedIntent.resetMode === "search") {
+    delete preferredCriteria.brand;
+    delete preferredCriteria.model;
+    delete preferredCriteria.minPrice;
+    delete preferredCriteria.maxPrice;
+  }
+
+  if (parsedIntent.resetMode === "model") {
+    delete preferredCriteria.model;
+  }
 
   return searchIntentStateSchema.parse({
     ...previousState,

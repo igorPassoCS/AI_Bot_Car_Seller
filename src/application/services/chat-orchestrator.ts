@@ -8,6 +8,8 @@ import { SearchCarsUseCase } from "@/application/use-cases/search-cars";
 import type { SearchIntentState } from "@/domain/search-intent";
 import {
   inferContextualCriteriaFromState,
+  intentParsingSchema,
+  normalizeIntentParsing,
   resolveCriteriaWithState
 } from "@/application/services/search-intent-evolution";
 import { parseCriteriaFromMessage } from "@/application/services/criteria-parser";
@@ -65,16 +67,40 @@ const buildEffectiveCriteriaFromSession = async (
 ): Promise<Partial<SearchCarsInput>> => {
   const repository = new JsonCarRepository(env.CARS_DATA_PATH);
   const allCars = await repository.getAllCars();
+  const inferredCriteria = parseCriteriaFromMessage(allCars, message);
+  const contextualCriteria = inferContextualCriteriaFromState(message, sessionState);
+  const parsedIntent = normalizeIntentParsing({
+    message,
+    hasHistory: sessionState.intentState.turns > 0,
+    state: sessionState,
+    parsedIntent: intentParsingSchema.parse({
+      normalizedMessage: message,
+      criteria: {
+        ...inferredCriteria,
+        ...contextualCriteria,
+        ...overrides
+      },
+      behaviorSignals: {
+        locationPreference: "unchanged",
+        budgetPreference: "unchanged"
+      }
+    })
+  });
 
   return resolveCriteriaWithState(
     {
       query: message,
+      excludedItems: parsedIntent.rejectedItems,
       ...overrides
     },
     {
       query: message,
-      ...parseCriteriaFromMessage(allCars, message),
-      ...inferContextualCriteriaFromState(message, sessionState)
+      ...inferredCriteria,
+      ...contextualCriteria,
+      excludedItems: [
+        ...sessionState.rejectedItems,
+        ...parsedIntent.rejectedItems
+      ]
     },
     sessionState
   );
@@ -121,8 +147,11 @@ export const runSalesConsultant = async (
 
     if (execution.status === "success") {
       const output = execution.result;
+      const workflowState = sessionStateSchema.parse(
+        execution.state ?? currentState
+      );
       const nextSessionState = updateSessionStateMemory({
-        previousState: currentState,
+        previousState: workflowState,
         userMessage: message,
         assistantReply: output.reply,
         filters: output.effectiveCriteria,

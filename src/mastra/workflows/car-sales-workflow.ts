@@ -20,6 +20,50 @@ import { parseCriteriaFromMessage } from "@/application/services/criteria-parser
 import { searchIntentStateSchema } from "@/domain/search-intent";
 import { buildFallbackReply } from "@/application/services/sales-reply";
 
+const normalize = (value: string): string =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
+const uniqueItems = (items: string[]): string[] => {
+  return items.filter(
+    (item, index) =>
+      items.findIndex((candidate) => normalize(candidate) === normalize(item)) ===
+      index
+  );
+};
+
+const buildCarReferenceKey = ({
+  name,
+  model
+}: {
+  name: string;
+  model: string;
+}): string => {
+  return `${name} ${model}`.trim();
+};
+
+const isCurrentCarRejected = (
+  currentState: z.infer<typeof sessionStateSchema>,
+  rejectedItems: string[]
+): boolean => {
+  if (!currentState.lastViewedCar || rejectedItems.length === 0) {
+    return false;
+  }
+
+  const currentCarValues = [
+    currentState.lastViewedCar.name,
+    currentState.lastViewedCar.model,
+    buildCarReferenceKey(currentState.lastViewedCar)
+  ];
+
+  return rejectedItems.some((item) =>
+    currentCarValues.some((value) => normalize(value) === normalize(item))
+  );
+};
+
 const searchCriteriaSchema = z.object({
   query: z.string().optional(),
   brand: z.string().optional(),
@@ -27,7 +71,8 @@ const searchCriteriaSchema = z.object({
   minPrice: z.number().positive().optional(),
   maxPrice: z.number().positive().optional(),
   location: z.string().optional(),
-  limit: z.number().int().min(1).max(8).optional()
+  limit: z.number().int().min(1).max(8).optional(),
+  excludedItems: z.array(z.string()).optional()
 });
 
 const workflowInputSchema = z.object({
@@ -153,6 +198,10 @@ Classifique:
 - intentType: greeting, search ou refinement
 - needsMoreInfo: true quando faltarem informacoes para seguir com recomendacao segura
 - missingFields: lista com brand, model, maxPrice e location ausentes
+- Se houver rejeicao explicita, preencha rejectedItems com marca, modelo ou a combinacao do carro rejeitado.
+- Se o usuario disser "esquece isso" ou "quero outra coisa", marque resetMode como search.
+- Se o usuario rejeitar a oferta atual com "nao quero esse", "chega desse" ou equivalente,
+  marque resetMode como model e use o carro do Current State como item rejeitado.
 - Se o usuario disser "mais caro que esse", "mais barato que esse", "acima desse" ou equivalente,
   use o Current State para preencher criteria.minPrice ou criteria.maxPrice com base no lastViewedCar.price.
 - Preserve os filtros atuais quando o usuario estiver refinando a busca, a menos que ele troque marca,
@@ -175,7 +224,8 @@ ${JSON.stringify(currentState, null, 2)}
       const parsedIntent = normalizeIntentParsing({
         message: inputData.message,
         parsedIntent: intentParsingSchema.parse(generation.object),
-        hasHistory: currentState.intentState.turns > 0
+        hasHistory: currentState.intentState.turns > 0,
+        state: currentState
       });
 
       return {
@@ -192,6 +242,7 @@ ${JSON.stringify(currentState, null, 2)}
         parsedIntent: normalizeIntentParsing({
           message: inputData.message,
           hasHistory: currentState.intentState.turns > 0,
+          state: currentState,
           parsedIntent: intentParsingSchema.parse({
             normalizedMessage: inputData.message,
             criteria: {
@@ -222,6 +273,10 @@ const dataRetrievalStep = createStep({
       query: inputData.message,
       ...inferredCriteria,
       ...inferContextualCriteriaFromState(inputData.message, currentState),
+      excludedItems: uniqueItems([
+        ...currentState.rejectedItems,
+        ...inputData.parsedIntent.rejectedItems
+      ]),
       ...inputData.parsedIntent.criteria
     };
 
@@ -273,7 +328,8 @@ const dataRetrievalStep = createStep({
       minPrice: effectiveCriteria.minPrice ?? null,
       maxPrice: effectiveCriteria.maxPrice ?? null,
       location: effectiveCriteria.location ?? null,
-      limit: effectiveCriteria.limit ?? null
+      limit: effectiveCriteria.limit ?? null,
+      excludedItems: effectiveCriteria.excludedItems ?? null
     }, {});
 
     return {
@@ -292,6 +348,13 @@ const strategySelectionStep = createStep({
   outputSchema: strategySelectionOutputSchema,
   execute: async ({ inputData, state, setState }) => {
     const currentState = sessionStateSchema.parse(state ?? {});
+    const currentSuggestion = inputData.result.suggestions[0]?.car;
+    const currentSuggestionKey = currentSuggestion
+      ? buildCarReferenceKey(currentSuggestion)
+      : undefined;
+    const currentSuggestionPersuasionCount = currentSuggestionKey
+      ? currentState.mismatchPersuasionByCar[currentSuggestionKey] ?? 0
+      : 0;
 
     const approachByScenario: Record<
       z.infer<typeof strategySchema>["scenario"],
@@ -307,12 +370,18 @@ const strategySelectionStep = createStep({
       inputData.parsedIntent.intentType === "greeting" ||
       (inputData.parsedIntent.needsMoreInfo &&
         inputData.result.suggestions.length === 0);
+    const shouldRespectPitchLimit =
+      (inputData.result.scenario === "price_mismatch" ||
+        inputData.result.scenario === "location_mismatch") &&
+      currentSuggestionPersuasionCount > 0;
 
     const strategy = {
       scenario: inputData.result.scenario,
       approach: shouldUseDiscoveryApproach
         ? "rapport_and_discovery"
-        : approachByScenario[inputData.result.scenario]
+        : shouldRespectPitchLimit
+          ? "discovery_recovery"
+          : approachByScenario[inputData.result.scenario]
     } as const;
 
     const nextIntentState = evolveSearchIntentState({
@@ -322,14 +391,26 @@ const strategySelectionStep = createStep({
       result: inputData.result
     });
 
+    const nextRejectedItems = uniqueItems([
+      ...currentState.rejectedItems,
+      ...inputData.parsedIntent.rejectedItems
+    ]);
+    const rejectedCurrentCar = isCurrentCarRejected(currentState, nextRejectedItems);
+
     await setState({
       ...currentState,
       intentState: nextIntentState,
       currentFilters: {
-        ...currentState.currentFilters,
-        ...inputData.effectiveCriteria
+        query: inputData.effectiveCriteria.query,
+        brand: inputData.effectiveCriteria.brand,
+        model: inputData.effectiveCriteria.model,
+        location: inputData.effectiveCriteria.location,
+        minPrice: inputData.effectiveCriteria.minPrice,
+        maxPrice: inputData.effectiveCriteria.maxPrice,
+        limit: inputData.effectiveCriteria.limit
       },
-      lastViewedCar: inputData.result.suggestions[0]?.car ?? currentState.lastViewedCar
+      rejectedItems: nextRejectedItems,
+      lastViewedCar: inputData.result.suggestions[0]?.car ?? (rejectedCurrentCar ? null : currentState.lastViewedCar)
     });
 
     return {
@@ -344,7 +425,9 @@ const persuasiveResponseStep = createStep({
   id: "persuasive-response",
   inputSchema: strategySelectionOutputSchema,
   outputSchema: workflowOutputSchema,
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData, state }) => {
+    const currentState = sessionStateSchema.parse(state ?? {});
+
     if (inputData.strategy.approach === "rapport_and_discovery") {
       return {
         reply: buildDiscoveryReply(inputData.parsedIntent.missingFields),
@@ -369,12 +452,32 @@ ${JSON.stringify(inputData.strategy, null, 2)}
 Estado evolutivo da intencao:
 ${JSON.stringify(inputData.intentState, null, 2)}
 
+Estado comercial atual:
+${JSON.stringify(
+      {
+        rejectedItems: currentState.rejectedItems,
+        lastViewedCar: currentState.lastViewedCar,
+        mismatchPersuasionByCar: currentState.mismatchPersuasionByCar,
+        currentSuggestionPersuasionCount: inputData.result.suggestions[0]
+          ? currentState.mismatchPersuasionByCar[
+              buildCarReferenceKey(inputData.result.suggestions[0].car)
+            ] ?? 0
+          : 0
+      },
+      null,
+      2
+    )}
+
 Resultado de busca:
 ${JSON.stringify(inputData.result, null, 2)}
 
 Importante:
 - Se a estrategia for rapport_and_discovery, acolha e faca perguntas curtas.
 - Nesse modo, nao tente fechar venda e nao pressione com CTA.
+- Se o usuario rejeitou a oferta atual ou se currentSuggestionPersuasionCount for maior que zero em um mismatch,
+  reconheca o "nao" imediatamente e faca pivot para as novas opcoes.
+- Em qualquer argumentacao de price_mismatch ou location_mismatch, termine com:
+  "Ou voce prefere que eu procure outras opcoes dentro do seu criterio original?"
 `;
 
     try {

@@ -11,6 +11,16 @@ const normalize = (value: string): string =>
     .toLowerCase()
     .trim();
 
+const buildCarReferenceKey = ({
+  name,
+  model
+}: {
+  name: string;
+  model: string;
+}): string => {
+  return `${name} ${model}`.trim();
+};
+
 const appendUnique = (items: string[], value?: string): string[] => {
   if (!value) {
     return items;
@@ -60,6 +70,9 @@ const detectPrincipalFacts = (
   if (/compar|versus|\bvs\b/.test(normalizedMessage)) {
     facts.push("Usuario pediu comparacao entre opcoes.");
   }
+  if (/nao quero|não quero|chega desse|esse nao|esse não|descarta|descartar/.test(normalizedMessage)) {
+    facts.push("Usuario rejeitou pelo menos uma das opcoes recentes.");
+  }
   if (result.scenario === "location_mismatch") {
     facts.push("Houve divergencia de localizacao nas sugestoes recentes.");
   }
@@ -97,6 +110,10 @@ const buildHistorySummary = (state: SessionState): string => {
     lines.push(
       `Localizacoes rejeitadas: ${state.factMemory.dislikedLocations.join(", ")}.`
     );
+  }
+
+  if (state.rejectedItems.length > 0) {
+    lines.push(`Itens rejeitados: ${state.rejectedItems.join(", ")}.`);
   }
 
   if (state.lastViewedCar) {
@@ -146,13 +163,28 @@ export const updateSessionStateMemory = ({
   filters: Partial<SearchCarsInput>;
   result: SearchCarsResult;
 }): SessionState => {
+  const topSuggestion = result.suggestions[0]?.car;
+  const mismatchPersuasionByCar = {
+    ...previousState.mismatchPersuasionByCar
+  };
+
+  if (
+    topSuggestion &&
+    (result.scenario === "price_mismatch" ||
+      result.scenario === "location_mismatch")
+  ) {
+    const key = buildCarReferenceKey(topSuggestion);
+    mismatchPersuasionByCar[key] = (mismatchPersuasionByCar[key] ?? 0) + 1;
+  }
+
   const nextState = sessionStateSchema.parse({
     ...previousState,
     currentFilters: {
       ...previousState.currentFilters,
       ...filters
     },
-    lastViewedCar: result.suggestions[0]?.car ?? previousState.lastViewedCar,
+    lastViewedCar: topSuggestion ?? previousState.lastViewedCar,
+    mismatchPersuasionByCar,
     recentTurns: [
       ...previousState.recentTurns,
       { role: "user", text: userMessage },

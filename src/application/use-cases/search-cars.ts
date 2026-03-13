@@ -24,6 +24,25 @@ const includesTerm = (value: string, term?: string): boolean => {
   return normalize(value).includes(normalize(term));
 };
 
+const isRejectedCar = (car: Car, rejectedItems: string[] = []): boolean => {
+  if (rejectedItems.length === 0) {
+    return false;
+  }
+
+  const brand = normalize(car.name);
+  const model = normalize(car.model);
+  const composite = normalize(`${car.name} ${car.model}`);
+
+  return rejectedItems.some((item) => {
+    const normalizedItem = normalize(item);
+    return (
+      normalizedItem === brand ||
+      normalizedItem === model ||
+      normalizedItem === composite
+    );
+  });
+};
+
 const buildSellingPoints = (
   car: Car,
   matchType: CarSuggestion["matchType"],
@@ -96,6 +115,7 @@ export class SearchCarsUseCase {
     const minPrice = input.minPrice;
     const maxPrice = input.maxPrice ?? inferred.maxPrice;
     const limit = input.limit ?? 3;
+    const excludedItems = input.excludedItems ?? [];
     const hasActiveCriteria = Boolean(
       brand || model || location || minPrice || maxPrice
     );
@@ -105,6 +125,7 @@ export class SearchCarsUseCase {
 
     const baseFiltered = allCars.filter(
       (car) =>
+        !isRejectedCar(car, excludedItems) &&
         includesTerm(car.name, brand) &&
         includesTerm(car.model, model) &&
         (!location || locationEquals(car.location, location))
@@ -112,6 +133,7 @@ export class SearchCarsUseCase {
 
     const relaxedFiltered = allCars.filter(
       (car) =>
+        !isRejectedCar(car, excludedItems) &&
         includesTerm(car.name, brand) &&
         includesTerm(car.model, model)
     );
@@ -185,10 +207,13 @@ export class SearchCarsUseCase {
     }
 
     const fallbackBase = allCars.filter((car) =>
+      !isRejectedCar(car, excludedItems) &&
       (minPrice ? car.price >= minPrice : true) &&
       (maxPrice ? car.price <= maxPrice : true)
     );
-    const fallbackPool = fallbackBase.length > 0 ? fallbackBase : allCars;
+    const fallbackPool = fallbackBase.length > 0
+      ? fallbackBase
+      : allCars.filter((car) => !isRejectedCar(car, excludedItems));
     const fallback = orderByPriceDistance(
       fallbackPool,
       maxPrice,

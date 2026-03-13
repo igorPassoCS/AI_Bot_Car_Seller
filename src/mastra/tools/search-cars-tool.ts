@@ -13,7 +13,8 @@ const inputSchema = z.object({
   minPrice: z.number().positive().nullable(),
   maxPrice: z.number().positive().nullable(),
   location: z.string().trim().min(1).nullable(),
-  limit: z.number().int().min(1).max(8).nullable()
+  limit: z.number().int().min(1).max(8).nullable(),
+  excludedItems: z.array(z.string().trim().min(1)).nullable()
 });
 
 const outputSchema = z.object({
@@ -54,7 +55,8 @@ const normalizeToolInput = (
     minPrice: toOptional(input.minPrice),
     maxPrice: toOptional(input.maxPrice),
     location: toOptional(input.location),
-    limit: toOptional(input.limit)
+    limit: toOptional(input.limit),
+    excludedItems: toOptional(input.excludedItems)
   };
 };
 

@@ -56,6 +56,7 @@ export type SearchCarsInput = {
   maxPrice?: number;
   location?: string;
   limit?: number;
+  excludedItems?: string[];
 };
 
 export type SearchCarsResult = {
