@@ -38,23 +38,65 @@ type ChatComposerProps = {
   loading: boolean;
   error: string | null;
   hasInteracted: boolean;
+  showQuickActions: boolean;
+  isQuickActionsMinimized: boolean;
   onSubmit: (event: SubmitEvent<HTMLFormElement>) => Promise<void>;
   onInputChange: (value: string) => void;
+  onQuickActionClick: (prompt: string) => Promise<void>;
 };
+
+const quickActions = [
+  {
+    label: "Quero um Kwid",
+    prompt: "Quero um Renault Kwid "
+  },
+  {
+    label: "Essa opcao ta muito cara",
+    prompt: "A opcao que voce me ofereceu estao muito cara"
+  },
+  {
+    label: "Moro no Rio de Janeiro",
+    prompt: "moro na cidade do Rio de Janeiro?"
+  }
+] as const;
 
 function ChatComposer({
   input,
   loading,
   error,
   hasInteracted,
+  showQuickActions,
+  isQuickActionsMinimized,
   onSubmit,
-  onInputChange
+  onInputChange,
+  onQuickActionClick
 }: ChatComposerProps) {
   return (
     <form
       className="rounded-[24px] border border-black/10 bg-white/95 p-3 shadow-[0_16px_44px_rgba(26,29,31,0.14)] backdrop-blur"
       onSubmit={onSubmit}
     >
+      {showQuickActions ? (
+        // Os chips aceleram a validacao dos cenarios principais sem duplicar fluxo.
+        <div className="mb-3 flex flex-wrap gap-2">
+          {quickActions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              disabled={loading}
+              onClick={() => void onQuickActionClick(action.prompt)}
+              className={`flex-auto rounded-full border border-orange-500 bg-white px-4 font-medium text-[var(--klubi-secondary)] transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none ${
+                isQuickActionsMinimized
+                  ? "py-2 text-xs"
+                  : "py-2.5 text-sm"
+              }`}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-3 md:flex-row">
         <input
           value={input}
@@ -88,6 +130,8 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [hasInteracted, setHasInteracted] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const showQuickActions = !hasInteracted || messages.length < 4;
+  const isQuickActionsMinimized = hasInteracted;
 
   useEffect(() => {
     if (!hasInteracted) {
@@ -97,9 +141,8 @@ export function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, loading, hasInteracted]);
 
-  const onSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const message = input.trim();
+  const handleSendMessage = async (rawMessage: string) => {
+    const message = rawMessage.trim();
     if (!message || loading) {
       return;
     }
@@ -139,6 +182,16 @@ export function ChatPage() {
     }
   };
 
+  const onSubmit = async (event: SubmitEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await handleSendMessage(input);
+  };
+
+  const onQuickActionClick = async (prompt: string) => {
+    setInput(prompt);
+    await handleSendMessage(prompt);
+  };
+
   return (
     <LayoutGroup>
       <main className="relative min-h-screen overflow-hidden bg-[var(--klubi-bg)] text-[var(--klubi-text)]">
@@ -174,8 +227,11 @@ export function ChatPage() {
                   loading={loading}
                   error={error}
                   hasInteracted={hasInteracted}
+                  showQuickActions={showQuickActions}
+                  isQuickActionsMinimized={isQuickActionsMinimized}
                   onSubmit={onSubmit}
                   onInputChange={setInput}
+                  onQuickActionClick={onQuickActionClick}
                 />
               </motion.div>
             </motion.section>
@@ -255,8 +311,11 @@ export function ChatPage() {
               loading={loading}
               error={error}
               hasInteracted={hasInteracted}
+              showQuickActions={showQuickActions}
+              isQuickActionsMinimized={isQuickActionsMinimized}
               onSubmit={onSubmit}
               onInputChange={setInput}
+              onQuickActionClick={onQuickActionClick}
             />
           </motion.div>
         ) : null}
