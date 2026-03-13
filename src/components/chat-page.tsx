@@ -224,14 +224,16 @@ export function ChatPage() {
               transition={{ duration: 0.35, ease: "easeOut" }}
             >
               <p className="mb-4 inline-flex rounded-full border border-black/10 bg-white px-4 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--klubi-secondary)]">
-                Consultor de Veiculos com IA
+                CONSULTOR AUTOMOTIVO DIGITAL
               </p>
               <h1 className="max-w-4xl font-[var(--font-title)] text-4xl leading-tight text-[var(--klubi-secondary)] md:text-6xl">
-                Encontre o carro ideal com estrategia de consultoria real.
+                O especialista que entende de carros. E principalmente, de
+                você.
               </h1>
               <p className="mt-5 max-w-2xl text-base text-[var(--klubi-text-muted)] md:text-lg">
-                Conte seu momento de compra e a IA mapeia opcoes, restricoes de
-                orcamento e alternativas inteligentes sem pressa de venda.
+                Esqueça os filtros complexos. Conte o que você busca e nossa
+                inteligência encontra a melhor oportunidade, negociando preço e
+                localização para o seu bolso.
               </p>
 
               <motion.div
