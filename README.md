@@ -18,7 +18,8 @@ Aplicação full-stack em TypeScript com Next.js + Mastra para busca de carros c
 
 ## Links da demonstração
 
-- Vídeo de demonstração: https://drive.google.com/file/d/1Ib0wQsDx0Z66tNI-RwUdi9TMmvLMBRqL/view?usp=sharing
+- Vídeo de demonstração: https://youtu.be/MMp9GFGQHz0
+
 - Aplicação deployada (não funcioana corretamente pois não está linkada à uma API key, mas está deployada da mesma forma): https://ai-bot-car-seller-5qqyq3vfu-igorpassocs-projects.vercel.app/
 
 ## Como rodar localmente
@@ -162,10 +163,11 @@ Ao mesmo tempo, a interface foi desenhada para ajudar tanto um usuário final qu
 
 Como o objetivo deste projeto foi construir uma versão funcional em apenas 2 dias, algumas decisões priorizaram velocidade de entrega e clareza da demo, em vez de profundidade total de produto. Por isso, a aplicação ainda possui algumas limitações importantes:
 
-- O estoque é local e controlado para demonstração, então a busca não está integrada a um inventário real de produção com atualização em tempo real.
 - A memória conversacional foi pensada para resolver bem o contexto recente, mas ainda não cobre todos os casos complexos de referência a carros muito antigos da conversa.
 - A estratégia de persuasão foi desenhada para ser previsível e segura na demo, então ela ainda é simples e não representa um motor comercial totalmente otimizado por métricas reais de conversão.
 - A experiência está mais forte para os fluxos principais de descoberta, refinamento por preço e localização; cenários muito abertos ou ambíguos ainda podem exigir ajustes adicionais.
+- Ainda existem inconsistência na aplicação, a qual em alguns casos de uso não volta a resposta correta;
+
 # 💼 Plano de Negócios 
 
 ## 1. Se você fosse lançar esse buscador no mercado, qual seria seu modelo de negócios?
